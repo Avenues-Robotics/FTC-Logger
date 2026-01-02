@@ -10,6 +10,11 @@ FTC Logger allows you to write logs from within an OpMode to JSONL files on the 
 - Exposes a lightweight HTTP API on the RC web server at `/logger/api/*`
 - Serves a web UI at `/logger` for plotting and inspecting runs
 
+## How to add to your Robot Controller
+1) Download and extract the ZIP file of this repository.
+2) Add the full `logger` folder to your teamcode folder (dev-tools and demoOpModes are optional and can be deleted).
+3) Follow the instructions below to use it in an OpMode
+
 ## How to use in an OpMode
 1) Create a `LogWriter` object.
 2) Use ElapsedTime() to track time (use seconds, milliseconds, or nanoseconds).
