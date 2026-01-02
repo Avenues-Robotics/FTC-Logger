@@ -9,9 +9,9 @@ FTC Logger allows you to write logs from within an OpMode to JSONL files on the 
 - Serves a web UI at `/logger` for plotting and inspecting runs
 
 ## How to use in an OpMode
-1) Create a `LogWriter` and log numeric fields each loop.
-2) Pick a time unit (seconds, milliseconds, or nanoseconds) and stick to it.
-3) Close the logger when finished.
+1) Create a `LogWriter` object.
+2) Use ElapsedTime() to track time (use seconds, milliseconds, or nanoseconds).
+3) Write log lines once per loop with a simple call: `logger.logMilliseconds(t, "armEncoder", pos, "armPower", armPower);`
 
 ### Example OpMode
 This assumes you have a motor and encoder plugged into your Robot Controller and named `armMotor` in your configuration.
@@ -76,7 +76,11 @@ public class SampleLoggerOpMode extends LinearOpMode {
 ## API summary
 - `GET /logger/api/opmodes`
 - `GET /logger/api/runs?opMode=NAME`
+- `GET /logger/api/run?opMode=NAME&run=RUN`
 - `GET /logger/api/data?opMode=NAME&run=RUN`
+- `GET /logger/api/fs`
+- `GET /logger/api/rename?opMode=NAME&run=RUN&base=BASE&suffix=SUFFIX`
+- `GET /logger/api/delete?opMode=NAME&run=RUN`
 
 ## Dev tools
 The `dev-tools` folder contains a lightweight local server and a fake log file so you can iterate on the UI without deploying to a Robot Controller.
