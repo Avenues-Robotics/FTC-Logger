@@ -2,6 +2,8 @@
 
 FTC Logger allows you to write logs from within an OpMode to JSONL files on the Robot Controller and provides a built-in web UI to explore plots, statistics, and run data.
 
+![FTC Logger preview](logger-preview.png)
+
 ## What it does
 - Writes run logs as JSONL files under:
   `.../ftc-logger/<OpMode>/<RunNumber>.jsonl`
@@ -69,9 +71,9 @@ public class SampleLoggerOpMode extends LinearOpMode {
 ```
 
 ## Viewing logs
-- On the RC: open a browser to `http://192.168.43.1:8080/logger`
-- The UI shows runs per OpMode and plots selected series
-- Time units are taken from the log file header (`tUnit`)
+- Connect to the Robot Controller WiFi, then open a browser to `http://192.168.43.1:8080/logger`
+- The UI allows you to select an OpMode and choose from multiple runs.
+- The File Manager allows you to rename or delete log files.
 
 ## API summary
 - `GET /logger/api/opmodes`
