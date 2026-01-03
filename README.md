@@ -107,7 +107,7 @@ Then open `http://127.0.0.1:8000/`.
 ```bash
 python3 TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools/logger-dev-server.py --robot
 ```
-
+Then open `http://127.0.0.1:8000/`.
 
 ## License
 MIT License. See the repository `LICENSE` file for details.
