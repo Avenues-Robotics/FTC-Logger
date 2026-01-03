@@ -105,7 +105,7 @@ Then open `http://127.0.0.1:8000/`.
 
 ### Run while connected to the Robot Controller WiFi
 ```bash
-python3 TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools/logger-dev-server.py --robot http://192.168.43.1:8080
+python3 TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools/logger-dev-server.py --robot
 ```
 
 
