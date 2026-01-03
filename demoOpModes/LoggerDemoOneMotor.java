@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.logger.LogWriter;
+import org.firstinspires.ftc.teamcode.logger.java.LogWriter;
 
 /*
 This OpMode demonstrates basic usage of the LogWriter class to log data from a single motor.

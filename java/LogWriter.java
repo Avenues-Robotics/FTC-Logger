@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.logger;
+package org.firstinspires.ftc.teamcode.logger.java;
 
 import android.content.Context;
 

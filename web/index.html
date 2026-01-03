@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FTC Logger</title>
+  <link rel="stylesheet" href="/logger/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- LEFT: Data selection panel -->
+  <aside class="panel leftPanel">
+    <div class="panelHeader">
+      <div class="panelActions">
+        <button id="openManager" class="btn toggle">Manage Log Files</button>
+      </div>
+    </div>
+
+    <div class="panelSection">
+      <div class="small">OpMode</div>
+      <select id="opModeSel" class="select"></select>
+      <div class="small"><b>Runs</b></div>
+      <select id="runSel" class="select"></select>
+    </div>
+
+    <div class="panelSection series">
+      <div class="small"><b>Series</b></div>
+      <div id="seriesList"></div>
+      <div class="small hint">
+        Tip: toggle series to show/hide data.
+      </div>
+    </div>
+  </aside>
+
+  <!-- MIDDLE: Plot -->
+  <main class="main">
+    <div class="mainHeader">
+      <div>
+        <div><b>Plot</b></div>
+        <div class="small" id="status">No run loaded</div>
+      </div>
+
+      <!-- Tools are on the RIGHT -->
+      <div class="tools">
+        <button id="zoomExtents" class="btn">Extents</button>
+        <button id="zoomIn" class="btn">Zoom +</button>
+        <button id="zoomOut" class="btn">Zoom −</button>
+        <button id="selectTool" class="btn">Selection</button>
+        <button id="panTool" class="btn toggle">Pan</button>
+        <button id="openTable" class="btn toggle">Table</button>
+      </div>
+    </div>
+
+    <div class="canvasWrap">
+      <canvas id="plot"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="hoverTime" class="hoverTime"></div>
+    </div>
+
+    <div id="stats">
+      <div class="statsHeader">
+        <div><b>Stats</b></div>
+        <button id="toggleReg" class="btn">Add regression</button>
+      </div>
+      <div class="statsBody">
+        <table id="statsTbl">
+          <thead><tr id="statsHead"></tr></thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- RIGHT: Table drawer (collapsed unless opened) -->
+  <aside id="tableDrawer" class="tableDrawer">
+    <div class="drawerHeader">
+      <div class="drawerHeaderLeft">
+        <button id="closeTable" class="btn">⟩</button>
+        <div>
+          <div><b>Table</b></div>
+          <div class="small">Selected run data</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="drawerBody">
+      <table id="tbl">
+        <thead><tr id="tblHead"></tr></thead>
+        <tbody id="tblBody"></tbody>
+      </table>
+    </div>
+  </aside>
+
+</div>
+
+<div id="manageModal" class="modal hidden">
+  <div class="modalBackdrop" id="closeManager"></div>
+  <div class="modalCard">
+    <div class="modalHeader">
+      <div>
+        <div><b>Manage Log Files</b></div>
+        <div class="small">Rename or delete runs and OpModes</div>
+      </div>
+      <div class="modalActions">
+        <button id="refreshFs" class="btn">Refresh</button>
+        <button id="closeManagerBtn" class="btn">Close</button>
+      </div>
+    </div>
+    <div class="modalBody">
+      <div id="fsTree" class="fsTree"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/logger/app.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.logger;
+package org.firstinspires.ftc.teamcode.logger.java;
 
 import android.content.Context;
 
@@ -15,9 +15,9 @@ import fi.iki.elonen.NanoHTTPD;
  * Serves a single file from the Android assets folder.
  *
  * Example:
- *  assetPath = "logger/index.html"
+ *  assetPath = "web/index.html"
  * corresponds to:
- *  TeamCode/src/main/assets/logger/index.html
+ *  TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/web/index.html
  */
 public final class StaticAssetHandler implements WebHandler {
 

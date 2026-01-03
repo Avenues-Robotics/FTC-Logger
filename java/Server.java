@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.logger;
+package org.firstinspires.ftc.teamcode.logger.java;
 
 import android.content.Context;
 
@@ -24,15 +24,15 @@ public final class Server {
 
             // Static UI
             manager.register("/logger",
-                    new StaticAssetHandler(context, "logger/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
             manager.register("/logger/",
-                    new StaticAssetHandler(context, "logger/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
             manager.register("/logger/index.html",
-                    new StaticAssetHandler(context, "logger/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
             manager.register("/logger/style.css",
-                    new StaticAssetHandler(context, "logger/style.css", "text/css; charset=utf-8"));
+                    new StaticAssetHandler(context, "web/style.css", "text/css; charset=utf-8"));
             manager.register("/logger/app.js",
-                    new StaticAssetHandler(context, "logger/app.js", "application/javascript; charset=utf-8"));
+                    new StaticAssetHandler(context, "web/app.js", "application/javascript; charset=utf-8"));
 
             // API
             manager.register("/logger/api/opmodes",

@@ -222,7 +222,7 @@ def main():
     )
     parser.add_argument(
         "--root",
-        default="TeamCode/src/main/assets/logger",
+        default="TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/web",
         help="Path to the logger asset directory.",
     )
     parser.add_argument("--host", default="127.0.0.1")

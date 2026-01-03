@@ -93,6 +93,7 @@ public class SampleLoggerOpMode extends LinearOpMode {
 The `dev-tools` folder contains a lightweight local server and a fake log file so you can iterate on the UI without deploying to a Robot Controller.
 
 - Location: `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools`
+- UI assets: `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/web`
 - `logger-dev-server.py`: serves the local UI and can proxy the API or serve fake data
 - `fake-log.jsonl`: sample log file used by the dev server
 
