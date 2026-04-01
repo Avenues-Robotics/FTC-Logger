@@ -1,6 +1,6 @@
 # FTC Logger
 
-FTC Logger allows you to write logs from within an OpMode to JSONL files on the Robot Controller and provides a built-in web UI to explore plots, statistics, and run data.
+FTC Logger allows you to write logs from within an OpMode to JSONL files on the Robot Controller, and provides a built-in web UI to explore plots, statistics, and run data.
 
 ![FTC Logger preview](logger-preview.png)
 
