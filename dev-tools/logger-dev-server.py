@@ -116,6 +116,68 @@ def delete_fake_run(op_mode, run):
     return {"ok": True, "run": run}
 
 
+# In-memory stand-in for @Configurable classes (used with --fake).
+FAKE_CONFIG = [
+    {
+        "name": "org.firstinspires.ftc.teamcode.ArmConstants",
+        "simpleName": "ArmConstants", "displayName": "ArmConstants", "outerSimpleName": "ArmConstants",
+        "fields": [
+            {"name": "kP", "type": "double", "value": "0.012"},
+            {"name": "kI", "type": "double", "value": "0.0"},
+            {"name": "kD", "type": "double", "value": "0.0004"},
+            {"name": "maxPower", "type": "double", "value": "0.8"},
+        ],
+    },
+    {
+        "name": "org.firstinspires.ftc.teamcode.DEV_TEST",
+        "simpleName": "DEV_TEST", "displayName": "DEV_TEST", "outerSimpleName": "DEV_TEST",
+        "fields": [
+            {"name": "targetPosition", "type": "int", "value": "500"},
+            {"name": "useFeedforward", "type": "boolean", "value": "true"},
+            {"name": "mode", "type": "enum", "value": "HOLD", "options": ["HOLD", "MOVE", "IDLE"]},
+            {"name": "label", "type": "string", "value": "test run"},
+        ],
+    },
+    {
+        "name": "org.firstinspires.ftc.teamcode.DriveTuner$Params",
+        "simpleName": "Params", "displayName": "DriveTuner.Params", "outerSimpleName": "DriveTuner",
+        "fields": [
+            {"name": "trackWidth", "type": "double", "value": "14.5"},
+            {"name": "ticksPerRev", "type": "int", "value": "537"},
+        ],
+    },
+]
+
+
+def set_fake_config(class_name, field_name, value):
+    for cls in FAKE_CONFIG:
+        if cls["name"] != class_name:
+            continue
+        for field in cls["fields"]:
+            if field["name"] != field_name:
+                continue
+            t = field["type"]
+            v = value.strip()
+            if t in ("int", "long", "short", "byte", "double", "float"):
+                try:
+                    v = str(int(v)) if t in ("int", "long", "short", "byte") else repr(float(v))
+                except ValueError:
+                    raise ValueError(f'Not a valid {t}: "{v}"')
+            elif t == "boolean":
+                if v.lower() not in ("true", "false"):
+                    raise ValueError("Expected true or false")
+                v = v.lower()
+            elif t == "enum":
+                if v not in field["options"]:
+                    raise ValueError(f"No enum constant {v}")
+            else:
+                v = value
+            field["value"] = v
+            return {"ok": True, "field": field}
+        raise ValueError(f"Unknown or unsupported field: {field_name}")
+    raise ValueError(f"Unknown configurable class: {class_name}")
+
+
 def sanitize_suffix(suffix):
     s = suffix.strip()
     s = s.replace("\n", " ").replace("\r", " ").replace("\t", " ")
@@ -197,6 +259,23 @@ class LoggerDevHandler(http.server.SimpleHTTPRequestHandler):
             payload = rename_fake_run(op_mode, run, suffix, base)
         elif parsed.path.startswith("/logger/api/delete"):
             payload = delete_fake_run(op_mode, run)
+        elif parsed.path.startswith("/logger/api/config"):
+            payload = {"classes": FAKE_CONFIG}
+        elif parsed.path.startswith("/logger/api/setconfig"):
+            try:
+                payload = set_fake_config(
+                    (qs.get("class") or [""])[0],
+                    (qs.get("field") or [""])[0],
+                    (qs.get("value") or [""])[0],
+                )
+            except ValueError as exc:
+                body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
+                self.send_response(HTTPStatus.BAD_REQUEST)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
 
         if payload is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Unknown fake endpoint")

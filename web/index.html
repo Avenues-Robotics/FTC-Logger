@@ -24,11 +24,24 @@
       <select id="runSel" class="select"></select>
     </div>
 
-    <div class="panelSection series">
-      <div class="small"><b>Series</b></div>
-      <div id="seriesList"></div>
-      <div class="small hint">
-        Tip: toggle series to show/hide data.
+    <div class="leftScroll">
+      <div class="panelSection series">
+        <div class="small"><b>Series</b></div>
+        <div id="seriesList"></div>
+        <div class="small hint">
+          Tip: toggle series to show/hide data.
+        </div>
+      </div>
+
+      <div class="panelSection configSection">
+        <div class="configHeader">
+          <div class="small"><b>Configurable</b></div>
+          <button id="refreshConfig" class="btn btnSmall" title="Reload current values from the robot">↻</button>
+        </div>
+        <div id="configList"></div>
+        <div class="small hint">
+          Edit a value and press Enter to send it to the robot.
+        </div>
       </div>
     </div>
   </aside>

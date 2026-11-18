@@ -51,11 +51,14 @@ html, body {
   justify-content: flex-start;
 }
 
-.series {
-  border-bottom: 0;
+.leftScroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
+
+.series { border-bottom: 1px solid var(--border); }
+.configSection { border-bottom: 0; }
 
 .hint { margin-top: 10px; }
 
@@ -334,3 +337,77 @@ html, body {
 table { width:100%; border-collapse: collapse; font-size: 12px; }
 th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align:left; }
 thead th { position: sticky; top:0; background: var(--panel2); }
+
+/* Configurable variables */
+.configHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.btnSmall { padding: 2px 8px; font-size: 12px; border-radius: 8px; }
+
+.cfgGroup {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.cfgGroup > summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  background: #0c1020;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfgGroup > summary::-webkit-details-marker { display: none; }
+.cfgGroup > summary::before {
+  content: "▸";
+  color: var(--muted);
+  transition: transform .12s ease;
+}
+.cfgGroup[open] > summary::before { transform: rotate(90deg); }
+.cfgGroup.current > summary { color: var(--accent); }
+.cfgCurrentTag {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.cfgFields { padding: 4px 10px 8px; }
+.cfgRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.cfgName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.cfgInput {
+  width: 100%;
+  background: #0c1020;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.cfgInput:focus { outline: none; border-color: var(--accent); }
+.cfgInput.dirty { border-color: #d9b45a; }
+.cfgInput.error { border-color: #ff6b6b; }
+.cfgInput.saved { border-color: #5ad98a; }
+input.cfgInput[type=checkbox] { width: auto; justify-self: start; }

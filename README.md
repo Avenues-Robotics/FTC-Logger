@@ -9,6 +9,7 @@ FTC Logger allows you to write logs from within an OpMode to JSONL files on the 
   `.../ftc-logger/<OpMode>/<RunNumber>.jsonl`
 - Exposes a lightweight HTTP API on the RC web server at `/logger/api/*`
 - Serves a web UI at `/logger` for plotting and inspecting runs
+- Lets you view and edit `public static` variables of `@Configurable` classes live from the web UI
 
 ## How to add to your Robot Controller
 1) Download and extract the ZIP file of this repository.
@@ -75,6 +76,29 @@ public class SampleLoggerOpMode extends LinearOpMode {
 }
 ```
 
+## Configurable variables
+Mark any class in TeamCode with `@Configurable` and its `public static` (non-final) fields show up in the **Configurable** panel under the Series list. Values can be edited from the browser while the robot is running.
+
+```java
+import org.firstinspires.ftc.teamcode.logger.java.Configurable;
+
+@Configurable
+@TeleOp(name = "Arm Tuner")
+public class ArmTuner extends LinearOpMode {
+    public static double kP = 0.01;
+    public static int targetPosition = 500;
+    public static boolean useFeedforward = true;
+    // ...
+}
+```
+
+- The class that matches the currently selected OpMode (by class name, the same name used for its log folder) is listed first and expanded; other classes are collapsed. Nested classes (e.g. `ArmTuner.Params`) are grouped with their outer OpMode.
+- Supported types: `int`, `long`, `short`, `byte`, `double`, `float`, `boolean` (and boxed versions), `String`, and enums. `final` fields and other types are not shown.
+- Type a value and press Enter (or click away) to send it. A green border means it was applied; red means it was rejected (hover for the reason). Esc reverts.
+- Changes take effect the next time your code reads the field, so read the field inside your loop for live tuning. Values are not saved: they reset to the defaults in your code when the Robot Controller app restarts.
+- Click ↻ to reload the current values from the robot.
+- Classes are found by scanning the installed TeamCode APK, so this works for code built with Android Studio (not OnBot Java).
+
 ## Viewing logs
 - Connect to the Robot Controller WiFi, then open a browser to `http://192.168.43.1:8080/logger`
 - The UI allows you to select an OpMode and choose from multiple runs.
@@ -88,6 +112,8 @@ public class SampleLoggerOpMode extends LinearOpMode {
 - `GET /logger/api/fs`
 - `GET /logger/api/rename?opMode=NAME&run=RUN&base=BASE&suffix=SUFFIX`
 - `GET /logger/api/delete?opMode=NAME&run=RUN`
+- `GET /logger/api/config`
+- `GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&value=VALUE`
 
 ## Dev tools
 The `dev-tools` folder contains a lightweight local server and a fake log file so you can iterate on the UI without deploying to a Robot Controller.

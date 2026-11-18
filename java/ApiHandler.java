@@ -35,10 +35,12 @@ import fi.iki.elonen.NanoHTTPD;
  *   GET /logger/api/fs
  *   GET /logger/api/rename?opMode=NAME&run=RUN&suffix=SUFFIX
  *   GET /logger/api/delete?opMode=NAME&run=RUN
+ *   GET /logger/api/config
+ *   GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&value=VALUE
  */
 public final class ApiHandler implements WebHandler {
 
-    public enum Route { OPMODES, RUNS, RUN_META, DATA, FS, RENAME, DELETE }
+    public enum Route { OPMODES, RUNS, RUN_META, DATA, FS, RENAME, DELETE, CONFIG, SET_CONFIG }
 
     private final Context context;
     private final Route route;
@@ -78,6 +80,15 @@ public final class ApiHandler implements WebHandler {
                     return okJson(deleteJson(
                             getFirstQuery(session, "opMode"),
                             getFirstQuery(session, "run")));
+                case CONFIG:
+                    return okJson(ConfigRegistry.listJson(context));
+                case SET_CONFIG:
+                    requireNonEmpty(getFirstQuery(session, "class"), "Missing query param: class");
+                    requireNonEmpty(getFirstQuery(session, "field"), "Missing query param: field");
+                    return okJson(ConfigRegistry.setJson(context,
+                            getFirstQuery(session, "class"),
+                            getFirstQuery(session, "field"),
+                            getFirstQuery(session, "value")));
                 default:
                     return badRequest("Unknown route");
             }

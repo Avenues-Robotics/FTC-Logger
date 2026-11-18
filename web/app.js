@@ -31,6 +31,10 @@ const state = {
   regressionEnabled: false,
   stats: [],
   tUnit: "s",
+
+  // @Configurable classes from /logger/api/config
+  config: [],
+  configOpen: new Set(), // classes the user expanded (reset when the OpMode changes)
 };
 
 function setStatus(s) { $("status").textContent = s; }
@@ -823,6 +827,172 @@ function buildSeriesToggles(names) {
   }
 }
 
+// --- Configurable variables ---
+// Matches FileSystemUtilities.sanitize() so class names line up with OpMode log folders.
+function sanitizeName(name) {
+  return String(name || "").replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+
+function isCurrentOpModeClass(cls) {
+  if (!state.opMode) return false;
+  return sanitizeName(cls.simpleName) === state.opMode ||
+         sanitizeName(cls.outerSimpleName) === state.opMode;
+}
+
+async function loadConfig() {
+  const list = $("configList");
+  try {
+    const j = await fetchJson("/logger/api/config");
+    state.config = j.classes || [];
+  } catch (e) {
+    state.config = [];
+    if (list) list.innerHTML = `<div class="small">Could not load configurable variables (${e.message}).</div>`;
+    console.error(e);
+    return;
+  }
+  renderConfig();
+}
+
+function renderConfig() {
+  const list = $("configList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (state.config.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "small";
+    empty.textContent = "No @Configurable classes found.";
+    list.appendChild(empty);
+    return;
+  }
+
+  // Current OpMode's class(es) first; the rest keep server (alphabetical) order.
+  const current = state.config.filter(isCurrentOpModeClass);
+  const others = state.config.filter((c) => !isCurrentOpModeClass(c));
+
+  for (const cls of [...current, ...others]) {
+    const isCurrent = current.includes(cls);
+    const group = document.createElement("details");
+    group.className = "cfgGroup" + (isCurrent ? " current" : "");
+    group.open = isCurrent || state.configOpen.has(cls.name);
+    group.ontoggle = () => {
+      if (isCurrent) return;
+      if (group.open) state.configOpen.add(cls.name);
+      else state.configOpen.delete(cls.name);
+    };
+
+    const summary = document.createElement("summary");
+    summary.title = cls.name;
+    const label = document.createElement("span");
+    label.textContent = cls.displayName || cls.simpleName;
+    summary.appendChild(label);
+    if (isCurrent) {
+      const tag = document.createElement("span");
+      tag.className = "cfgCurrentTag";
+      tag.textContent = "current";
+      summary.appendChild(tag);
+    }
+    group.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "cfgFields";
+    for (const field of cls.fields || []) body.appendChild(buildConfigRow(cls, field));
+    group.appendChild(body);
+
+    list.appendChild(group);
+  }
+}
+
+function buildConfigRow(cls, field) {
+  const row = document.createElement("label");
+  row.className = "cfgRow";
+
+  const name = document.createElement("span");
+  name.className = "cfgName";
+  name.textContent = field.name;
+  name.title = `${field.name} (${field.type})`;
+  row.appendChild(name);
+
+  let input;
+  if (field.type === "boolean") {
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "cfgInput";
+    input.checked = field.value === "true";
+    input.onchange = () => saveConfigValue(cls, field, input, input.checked ? "true" : "false");
+  } else if (field.type === "enum") {
+    input = document.createElement("select");
+    input.className = "cfgInput";
+    for (const opt of field.options || []) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt;
+      input.appendChild(o);
+    }
+    input.value = field.value ?? "";
+    input.onchange = () => saveConfigValue(cls, field, input, input.value);
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    input.className = "cfgInput";
+    input.spellcheck = false;
+    if (field.type !== "string") input.inputMode = "decimal";
+    input.value = field.value ?? "";
+    if (field.value === null) input.placeholder = "null";
+    input.oninput = () => {
+      input.classList.remove("error", "saved");
+      input.classList.toggle("dirty", input.value !== (field.value ?? ""));
+    };
+    input.onkeydown = (ev) => {
+      if (ev.key === "Escape") {
+        input.value = field.value ?? "";
+        input.classList.remove("dirty", "error");
+        input.title = "";
+        input.blur();
+      }
+    };
+    // 'change' fires on Enter and when leaving an edited field
+    input.onchange = () => {
+      if (input.value === (field.value ?? "")) {
+        input.classList.remove("dirty");
+        return;
+      }
+      saveConfigValue(cls, field, input, input.value);
+    };
+  }
+  row.appendChild(input);
+  return row;
+}
+
+async function saveConfigValue(cls, field, input, value) {
+  const url = `/logger/api/setconfig?class=${encodeURIComponent(cls.name)}` +
+    `&field=${encodeURIComponent(field.name)}&value=${encodeURIComponent(value)}`;
+  input.classList.remove("error", "saved");
+  try {
+    const res = await fetch(cacheBust(url), { cache: "no-store" });
+    let j = null;
+    try { j = await res.json(); } catch (_) { /* non-JSON error */ }
+    if (!res.ok || !j || j.ok === false) {
+      throw new Error((j && j.error) || `${res.status} ${res.statusText}`);
+    }
+    // Use the value the robot reports (e.g. "1" -> "1.0" for doubles)
+    field.value = j.field ? j.field.value : value;
+    if (input.type === "checkbox") input.checked = field.value === "true";
+    else input.value = field.value ?? "";
+    input.title = "";
+    input.classList.remove("dirty");
+    input.classList.add("saved");
+    setTimeout(() => input.classList.remove("saved"), 900);
+  } catch (e) {
+    input.classList.add("error");
+    input.title = String(e.message || e);
+    // Put checkbox/select back to the last known value
+    if (input.type === "checkbox") input.checked = field.value === "true";
+    else if (input.tagName === "SELECT") input.value = field.value ?? "";
+    setStatus(`Could not set ${cls.simpleName}.${field.name}: ${input.title}`);
+  }
+}
+
 function renderRunList() {
   const sel = $("runSel");
   if (!sel) return;
@@ -936,8 +1106,13 @@ function wireControls() {
 
   $("opModeSel").onchange = async () => {
     state.opMode = $("opModeSel").value;
+    state.configOpen.clear();
+    renderConfig();
     await loadRuns();
   };
+
+  const refreshConfig = $("refreshConfig");
+  if (refreshConfig) refreshConfig.onclick = () => loadConfig();
 
   $("runSel").onchange = async () => {
     const next = $("runSel").value;
@@ -1207,6 +1382,7 @@ async function refreshOpModeSelection() {
   const prevOp = state.opMode;
   const prevRun = state.run;
   await loadOpModes(true);
+  if (state.opMode !== prevOp) renderConfig();
   if (state.opMode !== prevOp) {
     await loadRuns();
     return;
@@ -1230,6 +1406,7 @@ window.addEventListener("resize", () => { resizeCanvases(); draw(); });
     if (modal) modal.classList.add("hidden");
 
     await loadOpModes();
+    loadConfig(); // independent of runs; failures are shown in the panel
     await loadRuns();
 
     resizeCanvases();

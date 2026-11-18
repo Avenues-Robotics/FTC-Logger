@@ -49,6 +49,10 @@ public final class Server {
                     new ApiHandler(context, ApiHandler.Route.RENAME));
             manager.register("/logger/api/delete",
                     new ApiHandler(context, ApiHandler.Route.DELETE));
+            manager.register("/logger/api/config",
+                    new ApiHandler(context, ApiHandler.Route.CONFIG));
+            manager.register("/logger/api/setconfig",
+                    new ApiHandler(context, ApiHandler.Route.SET_CONFIG));
 
         } catch (Throwable t) {
             // Never crash RC startup
