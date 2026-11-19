@@ -22,17 +22,17 @@ public final class Server {
         try {
             RobotLog.ii(TAG, "Attaching /logger handlers");
 
-            // Static UI
+            // Static UI (compiled in from web/* as WebAssets.java)
             manager.register("/logger",
-                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler("index.html", "text/html; charset=utf-8"));
             manager.register("/logger/",
-                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler("index.html", "text/html; charset=utf-8"));
             manager.register("/logger/index.html",
-                    new StaticAssetHandler(context, "web/index.html", "text/html; charset=utf-8"));
+                    new StaticAssetHandler("index.html", "text/html; charset=utf-8"));
             manager.register("/logger/style.css",
-                    new StaticAssetHandler(context, "web/style.css", "text/css; charset=utf-8"));
+                    new StaticAssetHandler("style.css", "text/css; charset=utf-8"));
             manager.register("/logger/app.js",
-                    new StaticAssetHandler(context, "web/app.js", "application/javascript; charset=utf-8"));
+                    new StaticAssetHandler("app.js", "application/javascript; charset=utf-8"));
 
             // API
             manager.register("/logger/api/opmodes",

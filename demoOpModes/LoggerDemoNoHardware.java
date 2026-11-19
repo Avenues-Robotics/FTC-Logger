@@ -5,11 +5,15 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.logger.java.Configurable;
-import org.firstinspires.ftc.teamcode.logger.java.LogWriter;
+import org.firstinspires.ftc.teamcode.logger.java.LoggerTelemetry;
 
 /*
-This OpMode demonstrates basic usage of the LogWriter class to log data to a JSON Lines file.
-It logs two example variables (x and y) over a period of 10 seconds, simulating noisy measurements.
+This OpMode demonstrates LoggerTelemetry: one object for Driver Station telemetry AND the logger graph.
+It graphs two example variables (x and y) over a period of 10 seconds, simulating noisy measurements.
+
+  telemetry.addData(...)   shows a value on the Driver Station, as usual
+  telemetry.addGraph(...)  adds values to the logger graph (name, value, name, value, ...)
+  telemetry.update()       sends the telemetry and writes one graph row (time is added for you)
 
 Because the class is marked @Configurable, its public static fields appear in the
 "Configurable" panel of the logger dashboard and can be changed between (or during) runs.
@@ -24,19 +28,13 @@ public class LoggerDemoNoHardware extends LinearOpMode {
     public static double noise = 20.0;
     public static double slope = 0.5;
 
-    LogWriter logger = null;
     ElapsedTime runtime = new ElapsedTime();
 
     @Override
     public void runOpMode() throws InterruptedException {
-        
-        logger = new LogWriter(hardwareMap.appContext, getClass().getSimpleName());
-        if (!logger.isReady()) {
-            telemetry.addLine("Logger failed to start.");
-            telemetry.addData("Error", logger.getInitError());
-            telemetry.update();
-            return;
-        }
+        // Replaces the OpMode's telemetry for this method: same calls, plus addGraph().
+        LoggerTelemetry telemetry = new LoggerTelemetry(this);
+
         telemetry.addLine("Logger Demo ready. Press START.");
         telemetry.update();
 
@@ -44,15 +42,14 @@ public class LoggerDemoNoHardware extends LinearOpMode {
         runtime.reset();
 
         while (opModeIsActive() && runtime.seconds() < runSeconds) {
-            double t = runtime.milliseconds();
+            double t = runtime.seconds();
             double x = xMean + noise * randomGaussian(); // noisy steady
             double y = slope * t + 1.0 + 2.0 * noise * randomGaussian(); // noisy linear
-
-            logger.logMilliseconds(t, "x", x, "y", y);
 
             telemetry.addData("t", "%.2f", t);
             telemetry.addData("x", "%.2f", x);
             telemetry.addData("y", "%.2f", y);
+            telemetry.addGraph("x", x, "y", y);
             telemetry.update();
 
             sleep(10);

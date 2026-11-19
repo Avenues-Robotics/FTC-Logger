@@ -35,6 +35,7 @@ import fi.iki.elonen.NanoHTTPD;
  *   GET /logger/api/delete?opMode=NAME&run=RUN
  *   GET /logger/api/config
  *   GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&value=VALUE
+ *   GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&reset=1   (back to the value in the code)
  *   GET /logger/api/control/opmodes
  *   GET /logger/api/control/state[?tseq=LAST_TELEMETRY_SEQ]
  *   GET /logger/api/control/init?name=OPMODE_NAME
@@ -92,6 +93,11 @@ public final class ApiHandler implements WebHandler {
                 case SET_CONFIG:
                     requireNonEmpty(getFirstQuery(session, "class"), "Missing query param: class");
                     requireNonEmpty(getFirstQuery(session, "field"), "Missing query param: field");
+                    if ("1".equals(getFirstQuery(session, "reset"))) {
+                        return okJson(ConfigRegistry.resetJson(context,
+                                getFirstQuery(session, "class"),
+                                getFirstQuery(session, "field")));
+                    }
                     return okJson(ConfigRegistry.setJson(context,
                             getFirstQuery(session, "class"),
                             getFirstQuery(session, "field"),

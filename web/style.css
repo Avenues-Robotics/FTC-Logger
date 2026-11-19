@@ -6,12 +6,60 @@
   --muted: #aab3d6;
   --border: #232b45;
   --accent: #7aa2ff;
+  --accentText: #0b0d12;
+  --plotBg: #070914;
+  --inputBg: #0c1020;
+  --tooltipBg: rgba(15,19,32,.92);
+  --groupBorder: #4a5a8a;
+  --backdrop: rgba(7,9,20,.75);
+  --checkerA: #1a2034;
+  --checkerB: #141a2b;
+  --idle: #4a5170;
+  --good: #5ad98a;
+  --warn: #d9b45a;
+  --bad: #ff6b6b;
+  --badText: #ff9a9a;
+  --dangerBorder: #d97b7b;
+  --dangerText: #ffbaba;
+  color-scheme: dark;
+}
+
+/* Light mode: toggled from the header (sets data-theme on <html>). */
+:root[data-theme="light"] {
+  --bg: #eef1f8;
+  --panel: #ffffff;
+  --panel2: #f6f7fb;
+  --text: #161a2b;
+  --muted: #5b6487;
+  --border: #d4d9e8;
+  --accent: #3b63d6;
+  --accentText: #ffffff;
+  --plotBg: #ffffff;
+  --inputBg: #ffffff;
+  --tooltipBg: rgba(255,255,255,.96);
+  --groupBorder: #9aa6c8;
+  --backdrop: rgba(22,26,43,.35);
+  --checkerA: #e6e9f2;
+  --checkerB: #f3f5fa;
+  --idle: #a6aec6;
+  --good: #1f9d55;
+  --warn: #b7791f;
+  --bad: #d64545;
+  --badText: #c53030;
+  --dangerBorder: #d64545;
+  --dangerText: #c53030;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 html, body {
   height: 100%;
   margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -20,7 +68,8 @@ html, body {
 #app {
   display: grid;
   grid-template-columns: 240px 260px 1fr auto; /* controls | telemetry+series | main | right drawer */
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Left panel */
@@ -63,17 +112,42 @@ html, body {
 
 .tools {
   display:flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* Bordered group of related toolbar buttons, with a label on the left. */
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--groupBorder);
+  border-radius: 12px;
+}
+.toolGroupLabel { color: var(--text); font-size: 14px; font-weight: 700; margin-right: 6px; }
+.downloadBtn { display: inline-flex; align-items: center; gap: 6px; }
+.downloadIcon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.toolGroup .btn { padding: 4px 10px; }
+#zoomIn, #zoomOut { min-width: 32px; font-weight: 600; }
+.btn:disabled { opacity: .4; cursor: default; }
 
 .canvasWrap { position: relative; flex: 1; padding: 10px; overflow: hidden; min-height: 0; }
 
 #plot {
   width: 100%;
   height: 100%;
-  background: #070914;
+  background: var(--plotBg);
   border: 1px solid var(--border);
   border-radius: 14px;
   max-width: 100%;
@@ -82,21 +156,24 @@ html, body {
 
 #overlay { position:absolute; left:0; top:0; pointer-events:none; }
 
-.hoverTime {
+
+.hoverPoint {
   position: absolute;
-  background: rgba(15,19,32,.92);
+  left: 0;
+  top: 0;
+  background: var(--tooltipBg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 4px 8px;
-  border-radius: 8px;
+  padding: 3px 7px;
+  border-radius: 6px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
   opacity: 0;
   transition: opacity .08s ease;
   white-space: nowrap;
+  z-index: 2;
 }
-
-.hoverTime { top: 21px; transform: none; }
 
 #stats {
   padding: 8px 12px 12px;
@@ -120,7 +197,7 @@ html, body {
   max-height: 22vh;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #0c1020;
+  background: var(--inputBg);
 }
 
 #statsTbl {
@@ -142,12 +219,20 @@ html, body {
 #statsTbl thead th {
   position: sticky;
   top: 0;
-  background: #0c1020;
+  background: var(--inputBg);
   z-index: 1;
 }
 
+#tbl tbody tr { cursor: pointer; user-select: none; }
+#tbl tbody tr:hover { background: rgba(122,162,255,.06); }
+
+/* Rows inside the time selection: light tint. Clicked point's row: strong highlight. */
 #tbl tbody tr.selected {
-  background: rgba(122,162,255,.16);
+  background: rgba(122,162,255,.10);
+}
+#tbl tbody tr.active {
+  background: rgba(122,162,255,.38);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 #statsTbl.regressionOff th:nth-child(n+7),
@@ -179,7 +264,7 @@ html, body {
 
 .select, .input {
   width: 100%;
-  background: #0c1020;
+  background: var(--inputBg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -199,6 +284,9 @@ html, body {
 
 /* RIGHT: Table drawer */
 .tableDrawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   width: 0;
   overflow: hidden;
   transition: width .18s ease;
@@ -227,7 +315,8 @@ html, body {
 .drawerBody {
   padding: 10px 12px;
   overflow: auto;
-  height: calc(100vh - 54px);
+  flex: 1;
+  min-height: 0;
 }
 
 .drawerSection { height: 100%; }
@@ -246,7 +335,7 @@ html, body {
   align-items:center;
   justify-content: space-between;
   padding: 8px 10px;
-  background: #0c1020;
+  background: var(--inputBg);
   border-bottom: 1px solid var(--border);
 }
 .fsRunRow {
@@ -263,10 +352,10 @@ html, body {
 .fsSuffix { width: 120px; }
 
 .btn.danger {
-  border-color: #d97b7b;
-  color: #ffbaba;
+  border-color: var(--dangerBorder);
+  color: var(--dangerText);
 }
-.btn.danger:hover { border-color: #ff9a9a; }
+.btn.danger:hover { border-color: var(--bad); }
 
 .modal {
   position: fixed;
@@ -282,7 +371,7 @@ html, body {
 .modalBackdrop {
   position: absolute;
   inset: 0;
-  background: rgba(7,9,20,.75);
+  background: var(--backdrop);
 }
 
 .modalCard {
@@ -319,6 +408,29 @@ html, body {
   overflow: auto;
 }
 
+/* PNG export dialog */
+.exportCard { width: min(1000px, 94vw); }
+.exportBody { display: flex; flex-direction: column; gap: 12px; }
+.exportOptions { display: flex; flex-wrap: wrap; gap: 16px; }
+.exportOption { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+.exportPreview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: repeating-conic-gradient(var(--checkerA) 0% 25%, var(--checkerB) 0% 50%) 0 0 / 16px 16px;
+}
+.exportPreview canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 58vh;
+  box-shadow: 0 4px 18px rgba(0,0,0,.4);
+}
+.btnPrimary { background: var(--accent); border-color: var(--accent); color: var(--accentText); font-weight: 600; }
+
 /* Table */
 table { width:100%; border-collapse: collapse; font-size: 12px; }
 th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align:left; }
@@ -342,7 +454,7 @@ thead th { position: sticky; top:0; background: var(--panel2); }
 .cfgGroup > summary {
   cursor: pointer;
   padding: 6px 10px;
-  background: #0c1020;
+  background: var(--inputBg);
   font-size: 12px;
   font-weight: 600;
   list-style: none;
@@ -371,9 +483,9 @@ thead th { position: sticky; top:0; background: var(--panel2); }
 .cfgFields { padding: 4px 10px 8px; }
 .cfgRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 84px;
+  grid-template-columns: minmax(0, 1fr) 70px 20px;
   align-items: center;
-  gap: 6px;
+  gap: 6px 4px;
   padding: 3px 0;
   font-size: 12px;
 }
@@ -385,7 +497,7 @@ thead th { position: sticky; top:0; background: var(--panel2); }
 }
 .cfgInput {
   width: 100%;
-  background: #0c1020;
+  background: var(--inputBg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -393,19 +505,34 @@ thead th { position: sticky; top:0; background: var(--panel2); }
   font-size: 12px;
 }
 .cfgInput:focus { outline: none; border-color: var(--accent); }
-.cfgInput.dirty { border-color: #d9b45a; }
-.cfgInput.error { border-color: #ff6b6b; }
-.cfgInput.saved { border-color: #5ad98a; }
+.cfgInput.dirty { border-color: var(--warn); }
+.cfgInput.error { border-color: var(--bad); }
+.cfgInput.saved { border-color: var(--good); }
 input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
+.cfgReset {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  visibility: hidden; /* keeps the column aligned when there's nothing to reset */
+}
+.cfgReset.visible { visibility: visible; }
+.cfgReset:hover { color: var(--accent); background: rgba(122,162,255,.14); }
 
 /* OpMode control (Driver Station-style) */
 .opCtl { display: flex; flex-direction: column; gap: 8px; }
 .opCtlHeader { display: flex; align-items: center; justify-content: space-between; }
 .opCtlState { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-.opCtlDot { width: 8px; height: 8px; border-radius: 50%; background: #4a5170; }
+.opCtlDot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
 .opCtl[data-state="stopped"] .opCtlDot { background: var(--muted); }
-.opCtl[data-state="init"] .opCtlDot { background: #d9b45a; }
-.opCtl[data-state="running"] .opCtlDot { background: #5ad98a; box-shadow: 0 0 6px #5ad98a; }
+.opCtl[data-state="init"] .opCtlDot { background: var(--warn); }
+.opCtl[data-state="running"] .opCtlDot { background: var(--good); box-shadow: 0 0 6px var(--good); }
 
 .opCtlButtons {
   display: flex;
@@ -424,7 +551,7 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
   padding: 0;
   border-radius: 50%;
   border: 2px solid var(--border);
-  background: #0c1020;
+  background: var(--inputBg);
   color: var(--text);
   cursor: pointer;
   font-weight: 700;
@@ -438,9 +565,9 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
 
 .opInit { border-color: var(--accent); color: var(--accent); }
 .opInit:hover:not(:disabled) { background: rgba(122,162,255,.14); }
-.opStart { border-color: #5ad98a; color: #5ad98a; }
+.opStart { border-color: var(--good); color: var(--good); }
 .opStart:hover:not(:disabled) { background: rgba(90,217,138,.14); }
-.opStop { border-color: #ff6b6b; color: #ff6b6b; }
+.opStop { border-color: var(--bad); color: var(--bad); }
 .opStop:hover:not(:disabled) { background: rgba(255,107,107,.14); }
 
 /* Which buttons show in each state, like the Driver Station */
@@ -455,7 +582,7 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
 
 .opCtlMsg { min-height: 0; text-align: center; }
 .opCtlMsg:empty { display: none; }
-.opCtlMsg.error { color: #ff9a9a; }
+.opCtlMsg.error { color: var(--badText); }
 
 /* Space bar e-stop hint + flash */
 .opCtlKeyHint { display: none; text-align: center; }
@@ -481,10 +608,10 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
 .logSection .configHeader { margin-bottom: 0; }
 .leftPanel { min-height: 0; }
 
-/* Column 2: telemetry (top, grows) + series (bottom) */
+/* Column 2: telemetry (top half) + logs + series (fills the rest) */
 .telemetryPanel { min-height: 0; overflow: hidden; }
 .telemetrySection {
-  flex: 1 1 60%;
+  flex: 0 0 50%;
   min-height: 120px;
   display: flex;
   flex-direction: column;
@@ -494,17 +621,17 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
   border-top: 1px solid var(--border);
 }
 .telemetryPanel .series {
-  flex: 0 1 auto;
-  max-height: 32%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  padding-top: 0;
+  padding-top: 12px;
 }
 .telemetryMeta { font-size: 11px; }
 .telemetry {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: #070914;
+  background: var(--plotBg);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 8px 10px;
@@ -519,9 +646,9 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
 
 /* Live toggle */
 .liveBtn { display: inline-flex; align-items: center; gap: 6px; }
-.liveDot { width: 8px; height: 8px; border-radius: 50%; background: #4a5170; }
+.liveDot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
 .liveBtn.active .liveDot { background: var(--muted); }
-.liveBtn.streaming .liveDot { background: #ff6b6b; box-shadow: 0 0 6px #ff6b6b; animation: livePulse 1.2s ease-in-out infinite; }
+.liveBtn.streaming .liveDot { background: var(--bad); box-shadow: 0 0 6px var(--bad); animation: livePulse 1.2s ease-in-out infinite; }
 @keyframes livePulse { 50% { opacity: .35; } }
 
 .select:disabled { opacity: .45; cursor: not-allowed; }
@@ -529,3 +656,69 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
 /* Stats rows color-coded to their series */
 #statsTbl tr.statsRow td:first-child { box-shadow: inset 3px 0 0 var(--series-color); }
 #statsTbl td.statsName { color: var(--series-color); font-weight: 600; }
+
+/* ---- App header: title + robot status ---- */
+.appHeader {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 54px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.appTitle { font-size: 20px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.robotStatus { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.statusItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  font-size: 15px;
+  white-space: nowrap;
+}
+.statusLabel { color: var(--muted); }
+.statusValue { font-variant-numeric: tabular-nums; font-weight: 600; }
+.statusDot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
+.connStatus[data-state="connected"] .statusDot { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.connStatus[data-state="notready"] .statusDot { background: var(--warn); }
+.connStatus[data-state="disconnected"] .statusDot { background: var(--bad); }
+.statusItem[data-level="good"] .statusValue { color: var(--good); }
+.statusItem[data-level="warn"] .statusValue { color: var(--warn); }
+.statusItem[data-level="bad"]  .statusValue { color: var(--bad); }
+
+/* Light/dark toggle in the header */
+.themeToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s ease, transform .15s ease;
+}
+.themeToggle:hover { border-color: var(--accent); }
+.themeToggle:active { transform: scale(.92); }
+.themeToggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Show the sun in dark mode (click for light) and the moon in light mode. */
+.themeToggle .iconMoon { display: none; }
+:root[data-theme="light"] .themeToggle .iconSun { display: none; }
+:root[data-theme="light"] .themeToggle .iconMoon { display: block; fill: currentColor; stroke: none; }

@@ -5,50 +5,55 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.logger.java.LogWriter;
+import org.firstinspires.ftc.teamcode.logger.java.Configurable;
+import org.firstinspires.ftc.teamcode.logger.java.LoggerTelemetry;
 
 /*
-This OpMode demonstrates basic usage of the LogWriter class to log data from a single motor.
-It sets motor power and logs the motor encoder position and power over 5 seconds.
+This OpMode demonstrates graphing a single motor with LoggerTelemetry.
+It ramps the motor power down from 1.0 and graphs the encoder position and power for 5 seconds.
+
+LoggerTelemetry is regular telemetry plus one extra method:
+  telemetry.addData(...)   shows a value on the Driver Station, as usual
+  telemetry.addGraph(...)  adds values to the logger graph (name, value, name, value, ...)
+  telemetry.update()       sends the telemetry and writes one graph row (time is added for you)
 */
 
+@Configurable
 @TeleOp(name = "Logger Demo One Motor", group = "Logger")
 public class LoggerDemoOneMotor extends LinearOpMode {
     private ElapsedTime runtime = new ElapsedTime();
-    private LogWriter logger = null;
-    private DcMotor armMotor = null;
-    private double armPower = 1.0;
-    
+    private DcMotor testMotor = null;
+    public static double testMotorPower = 1.0;
+
     @Override
     public void runOpMode() throws InterruptedException {
-        armMotor = hardwareMap.get(DcMotor.class, "armMotor");
-        logger = new LogWriter(hardwareMap.appContext, getClass().getSimpleName());
-        if (!logger.isReady()) {
-            telemetry.addLine("Logger failed to start.");
-            telemetry.addData("Error", logger.getInitError());
-            telemetry.update();
-            return;
-        }
+        testMotor = hardwareMap.get(DcMotor.class, "testMotor");
+
+        // Replaces the OpMode's telemetry for this method: same calls, plus addGraph().
+        LoggerTelemetry telemetry = new LoggerTelemetry(this);
+
+        telemetry.addLine("Ready. Press START to run the arm for 5 seconds.");
+        telemetry.update();
 
         waitForStart();
-        // start the opMode timer at 0 when the play button is pressed
-        runtime.reset(); 
+        // start the OpMode timer at 0 when the play button is pressed
+        runtime.reset();
 
-        while (opModeIsActive() && runtime.seconds() < 5.0) {
-            
-            armMotor.setPower(armPower);
-            armPower -= 0.01;
-            
-            int pos = armMotor.getCurrentPosition();
+        while (opModeIsActive()) {
 
-            // get the current time in milliseconds
-            double t = runtime.milliseconds(); 
+            testMotor.setPower(testMotorPower);
 
-            // Write one line to the log file.
-            // The first argument is the current time
-            // The rest of the arguments are key, value pairs
-            logger.logMilliseconds(t, "armEncoder", pos, "armPower", armPower);
+            int pos = testMotor.getCurrentPosition();
 
+            // Driver Station
+            telemetry.addData("Arm encoder", pos);
+            telemetry.addData("Arm power", "%.2f", testMotorPower);
+
+            // Graph: name, value pairs
+            telemetry.addGraph("armEncoder", pos, "armPower", testMotorPower);
+
+            // Sends the telemetry and writes one row to the graph
+            telemetry.update();
         }
     }
 }

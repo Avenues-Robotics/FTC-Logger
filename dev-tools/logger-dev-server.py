@@ -176,14 +176,22 @@ FAKE_CONFIG = [
     },
 ]
 
+# Like the real robot, remember each field's starting ("in the code") value for reset.
+for _cls in FAKE_CONFIG:
+    for _f in _cls["fields"]:
+        _f["codeValue"] = _f["value"]
 
-def set_fake_config(class_name, field_name, value):
+
+def set_fake_config(class_name, field_name, value, reset=False):
     for cls in FAKE_CONFIG:
         if cls["name"] != class_name:
             continue
         for field in cls["fields"]:
             if field["name"] != field_name:
                 continue
+            if reset:
+                field["value"] = field["codeValue"]
+                return {"ok": True, "field": field}
             t = field["type"]
             v = value.strip()
             if t in ("int", "long", "short", "byte", "double", "float"):
@@ -280,6 +288,9 @@ class FakeRobot:
         with self.lock:
             # Every fake run logs to DEV_TEST, so point the UI there after a stop.
             out = {"ready": True, "state": self.state, "active": self.active, "lastClass": "DEV_TEST"}
+            # Fake battery: sags a little while an OpMode runs.
+            sag = 0.45 if self.state == "running" else 0.0
+            out["batteryVoltage"] = round(13.05 - sag + random.uniform(-0.04, 0.04), 2)
             if self.live_run:
                 out["liveOpMode"] = "DEV_TEST"
                 out["liveRun"] = self.live_run
@@ -491,6 +502,8 @@ class LoggerDevHandler(http.server.SimpleHTTPRequestHandler):
                 return self.fake_api()
             return self.proxy_api()
 
+        if self.path in ("/", "/logger", "/logger/", "/logger/index.html", "/index.html"):
+            check_web_assets()  # each page load: catch web/ edits that weren't rebuilt
         if self.path in ("/", "/logger"):
             self.path = "/index.html"
         elif self.path.startswith("/logger/"):
@@ -570,6 +583,7 @@ class LoggerDevHandler(http.server.SimpleHTTPRequestHandler):
                     (qs.get("class") or [""])[0],
                     (qs.get("field") or [""])[0],
                     (qs.get("value") or [""])[0],
+                    reset=(qs.get("reset") or [""])[0] == "1",
                 )
             except ValueError as exc:
                 return self.send_json_error(str(exc))
@@ -599,6 +613,35 @@ class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
     def __init__(self, server_address, handler_class, api_base):
         self.api_base = api_base
         super().__init__(server_address, handler_class)
+
+
+# ---------------------------------------------------------------------------
+# WebAssets.java freshness: the robot serves the web UI compiled into WebAssets.java,
+# while this server serves web/ directly. Warn when they no longer match.
+# ---------------------------------------------------------------------------
+_assets_was_stale = None
+
+
+def check_web_assets(force_print=False):
+    """Prints a warning when java/WebAssets.java is out of date with web/ (once per change)."""
+    global _assets_was_stale
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "build_web_assets", Path(__file__).resolve().parent / "build-web-assets.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        stale = mod.is_stale()
+    except Exception as exc:  # never break the dev server over this
+        print(f"(Could not check WebAssets.java: {exc})")
+        return
+    if stale != _assets_was_stale or force_print:
+        if stale:
+            print("\n*** java/WebAssets.java is OUT OF DATE with web/. The robot will serve the old UI.")
+            print("*** Run:  python3 dev-tools/build-web-assets.py\n")
+        elif _assets_was_stale:
+            print("java/WebAssets.java is up to date again.")
+    _assets_was_stale = stale
 
 
 def main():
@@ -649,6 +692,7 @@ def main():
         print("Fake robot ready: INIT / START / STOP from the Robot panel write new runs there")
     else:
         print(f"Proxying /logger/api/* to {args.robot}")
+    check_web_assets()
     httpd.serve_forever()
 
 

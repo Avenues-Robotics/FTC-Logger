@@ -6,6 +6,8 @@ import com.qualcomm.ftccommon.FtcEventLoop;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier;
+import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
 import com.qualcomm.robotcore.util.RobotLog;
 
@@ -18,6 +20,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Lets the web UI select, init, start, and stop OpModes, like the Driver Station does.
@@ -42,6 +45,12 @@ public final class OpModeControl {
     private static volatile TelemetryReader telemetryReader = null;
     /** Files modified this long before INIT still count, to absorb clock/mtime granularity. */
     private static final long LIVE_RUN_SLACK_MS = 1000;
+    /** Battery voltage is re-read at most this often, however fast the UI polls. */
+    private static final long VOLTAGE_CACHE_MS = 1000;
+    private static volatile double cachedVoltage = Double.NaN;
+    private static volatile long cachedVoltageMillis = 0;
+    /** Closed (and forgotten) when the current OpMode stops, e.g. LoggerTelemetry's log file. */
+    private static final List<AutoCloseable> CLOSE_ON_STOP = new CopyOnWriteArrayList<>();
 
     private static final OpModeManagerNotifier.Notifications LISTENER =
             new OpModeManagerNotifier.Notifications() {
@@ -64,6 +73,10 @@ public final class OpModeControl {
                 @Override
                 public void onOpModePostStop(OpMode opMode) {
                     started = false;
+                    for (AutoCloseable c : CLOSE_ON_STOP) {
+                        try { c.close(); } catch (Exception e) { RobotLog.ee(TAG, e, "close on stop failed"); }
+                    }
+                    CLOSE_ON_STOP.clear();
                 }
             };
 
@@ -104,12 +117,14 @@ public final class OpModeControl {
      * Returns the current OpMode state.
      *
      * { "ready": true, "state": "stopped"|"init"|"running", "active": "name", "lastClass": "SimpleName",
-     *   "liveOpMode": "LogFolder", "liveRun": "0007",
+     *   "liveOpMode": "LogFolder", "liveRun": "0007", "batteryVoltage": 12.84,
      *   "telemetrySeq": "1a2b3c", "telemetry": { "lines": [...], "log": [...] } }
      *
      * liveOpMode/liveRun name the log file written by the most recent OpMode (the newest
      * .jsonl modified since its INIT), so the UI can plot it live. They are omitted until
      * that OpMode creates a LogWriter.
+     *
+     * batteryVoltage is omitted when no voltage sensor (Control/Expansion Hub) can be read.
      *
      * telemetry is only included when its seq differs from {@code telemetrySeqParam}.
      */
@@ -126,6 +141,8 @@ public final class OpModeControl {
                 .put("state", state)
                 .put("active", idle ? "" : name)
                 .put("lastClass", lastOpModeClass);
+        double volts = batteryVoltage(m);
+        if (!Double.isNaN(volts)) out.put("batteryVoltage", Math.round(volts * 100) / 100.0);
         File live = findLiveRunFile();
         if (live != null) {
             String file = live.getName();
@@ -177,7 +194,38 @@ public final class OpModeControl {
         return new JSONObject().put("ok", true);
     }
 
+    /** Closes {@code c} when the running OpMode stops (used to close log files). */
+    static void closeOnStop(AutoCloseable c) {
+        if (c != null) CLOSE_ON_STOP.add(c);
+    }
+
     // ---- helpers ----
+
+    /**
+     * Lowest positive reading across the robot's voltage sensors (the usual FTC approach,
+     * since an idle hub can report 0), cached for {@link #VOLTAGE_CACHE_MS}. NaN if none.
+     */
+    private static double batteryVoltage(OpModeManagerImpl m) {
+        long now = System.currentTimeMillis();
+        if (now - cachedVoltageMillis < VOLTAGE_CACHE_MS) return cachedVoltage;
+        double result = Double.NaN;
+        try {
+            HardwareMap hw = m.getHardwareMap();
+            if (hw != null) {
+                double min = Double.POSITIVE_INFINITY;
+                for (VoltageSensor sensor : hw.voltageSensor) {
+                    double v = sensor.getVoltage();
+                    if (v > 0 && v < min) min = v;
+                }
+                if (min != Double.POSITIVE_INFINITY) result = min;
+            }
+        } catch (Throwable t) {
+            // Hardware map can be mid-rebuild (e.g. Restart Robot); report "unknown" this time.
+        }
+        cachedVoltage = result;
+        cachedVoltageMillis = now;
+        return result;
+    }
 
     private static OpModeManagerImpl requireManager() {
         OpModeManagerImpl m = manager;

@@ -2,12 +2,15 @@
 
 const $ = (id) => document.getElementById(id);
 
-const CROSSHAIR_CURSOR =
-  "url(\"data:image/svg+xml;utf8," +
-  "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'>" +
-  "<line x1='10' y1='0' x2='10' y2='20' stroke='white' stroke-width='1'/>" +
-  "<line x1='0' y1='10' x2='20' y2='10' stroke='white' stroke-width='1'/>" +
-  "</svg>\") 10 10, crosshair";
+// Thin crosshair cursor for the plot, colored to contrast with the current theme.
+function crosshairCursor() {
+  const color = currentTheme() === "light" ? "%23161a2b" : "white"; // %23 = '#' inside a data URL
+  return "url(\"data:image/svg+xml;utf8," +
+    "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'>" +
+    `<line x1='10' y1='0' x2='10' y2='20' stroke='${color}' stroke-width='1'/>` +
+    `<line x1='0' y1='10' x2='20' y2='10' stroke='${color}' stroke-width='1'/>` +
+    "</svg>\") 10 10, crosshair";
+}
 
 const state = {
   opModes: [],
@@ -28,6 +31,7 @@ const state = {
   dragStart: null,
   dragRect: null,
   selectionRange: null, // [xMin, xMax] in tUnit
+  activeRow: null,      // sample index of the point last clicked on the plot (highlighted in the table)
   regressionEnabled: false,
   stats: [],
   tUnit: "s",
@@ -74,6 +78,7 @@ function bindDrawerButtons() {
   if (openBtn && drawer) openBtn.onclick = () => {
     drawer.classList.add("open");
     updateToggleUI();
+    scrollToActiveRow();
   };
   if (closeBtn && drawer) closeBtn.onclick = () => {
     drawer.classList.remove("open");
@@ -126,10 +131,7 @@ function pxToData(px, py, w, h) {
   return [x, y];
 }
 
-function getPlotMetrics(dpr) {
-  const canvas = $("plot");
-  const w = canvas.width;
-  const h = canvas.height;
+function getPlotMetrics(dpr, w = $("plot").width, h = $("plot").height) {
   const marginL = 54 * dpr;
   const marginT = 4 * dpr;
   const marginR = 8 * dpr;
@@ -188,23 +190,8 @@ function zoomBy(factor, aboutX = null, aboutY = null, xOnly = false) {
   draw();
 }
 
-// While following a live run, the x axis starts as a fixed window and grows once data passes it.
-const LIVE_WINDOW_SECONDS = 30;
-
-function liveWindowInTimeUnits() {
-  const perSecond = { s: 1, ms: 1e3, ns: 1e9 }[state.tUnit] || 1;
-  return LIVE_WINDOW_SECONDS * perSecond;
-}
-
+// Full extents span the whole run: first to last sample (also while following live).
 function computeFullExtents() {
-  computeDataExtents();
-  if (live.following) {
-    const f = state.full;
-    f.xMax = Math.max(f.xMax, f.xMin + liveWindowInTimeUnits());
-  }
-}
-
-function computeDataExtents() {
   const t = state.data?.t || [];
   if (!t.length) {
     state.full = { xMin: 0, xMax: 1, yMin: -1, yMax: 1 };
@@ -212,6 +199,7 @@ function computeDataExtents() {
   }
 
   let xMin = t[0], xMax = t[t.length - 1];
+  if (!(xMax > xMin)) xMax = xMin + 1; // a single sample still needs a non-zero span
   let yMin = Infinity, yMax = -Infinity;
 
   for (const [name, arr] of Object.entries(state.data.series || {})) {
@@ -249,9 +237,42 @@ function niceStep(span) {
   return nice * p;
 }
 
-function drawAxes(ctx, w, h) {
+// Plot colors. "dark" is the on-screen look; "light" is offered for PNG export.
+const PLOT_THEMES = {
+  dark: {
+    bg: "#070914",
+    grid: "rgba(255,255,255,.10)",
+    axisText: "rgba(232,236,255,.75)",
+    frame: "rgba(255,255,255,.20)",
+    selFill: "rgba(255,255,255,.08)",
+    unitText: "rgba(232,236,255,.65)",
+    marker: "rgba(122,162,255,.9)",
+    text: "rgba(232,236,255,.95)",
+    boxBg: "rgba(15,19,32,.92)",
+    boxBorder: "rgba(122,162,255,.7)",
+    series: (idx) => `hsla(${(idx * 67) % 360}, 85%, 65%, 0.9)`,
+    regression: (idx) => `hsla(${(idx * 67) % 360}, 90%, 40%, 1)`,
+  },
+  light: {
+    bg: "#ffffff",
+    grid: "rgba(0,0,0,.09)",
+    axisText: "rgba(20,24,40,.80)",
+    frame: "rgba(0,0,0,.35)",
+    selFill: "rgba(50,90,210,.10)",
+    unitText: "rgba(20,24,40,.65)",
+    marker: "rgba(40,80,200,.9)",
+    text: "rgba(20,24,40,.95)",
+    boxBg: "rgba(255,255,255,.94)",
+    boxBorder: "rgba(40,80,200,.6)",
+    // Same hues as on screen, darker so they read on white.
+    series: (idx) => `hsla(${(idx * 67) % 360}, 80%, 42%, 0.9)`,
+    regression: (idx) => `hsla(${(idx * 67) % 360}, 90%, 28%, 1)`,
+  },
+};
+
+function drawAxes(ctx, w, h, th = PLOT_THEMES.dark) {
   const dpr = window.devicePixelRatio || 1;
-  const { marginL, marginT, marginB, plotW, plotH } = getPlotMetrics(dpr);
+  const { marginL, marginT, marginB, plotW, plotH } = getPlotMetrics(dpr, w, h);
 
   // background already drawn by caller
 
@@ -260,7 +281,7 @@ function drawAxes(ctx, w, h) {
   ctx.translate(marginL, marginT);
 
   // grid
-  ctx.strokeStyle = "rgba(255,255,255,.10)";
+  ctx.strokeStyle = th.grid;
   ctx.lineWidth = 1;
 
   const xSpan = state.xMax - state.xMin;
@@ -272,7 +293,7 @@ function drawAxes(ctx, w, h) {
   const y0 = Math.ceil(state.yMin / yStep) * yStep;
 
   // vertical grid + x labels
-  ctx.fillStyle = "rgba(232,236,255,.75)";
+  ctx.fillStyle = th.axisText;
   ctx.font = `${Math.max(10, Math.round(12 * (window.devicePixelRatio || 1)))}px system-ui`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -308,7 +329,7 @@ function drawAxes(ctx, w, h) {
   }
 
   // axes border
-  ctx.strokeStyle = "rgba(255,255,255,.20)";
+  ctx.strokeStyle = th.frame;
   ctx.strokeRect(0, 0, plotW, plotH);
 
   ctx.restore();
@@ -321,13 +342,46 @@ function draw() {
   const ctx = plot.getContext("2d");
   const w = plot.width, h = plot.height;
 
+  const th = plotTheme();
+  const axes = renderPlot(ctx, w, h, th);
+  if (!axes) return;
+  const { marginL, plotW } = axes;
+
+  // selection rect on overlay (canvas coords)
+  const ov = $("overlay");
+  const octx = ov.getContext("2d");
+  octx.clearRect(0, 0, w, h);
+
+  if (state.dragRect) {
+    // A time selection always spans the full plot height; only the drag's x extent matters.
+    const r = state.dragRect;
+    const x1 = Math.max(marginL, r.x);
+    const x2 = Math.min(marginL + plotW, r.x + r.w);
+    if (x2 > x1) {
+      const top = 4; // must match the translate() in renderPlot()
+      octx.save();
+      octx.fillStyle = "rgba(122,162,255,.15)";
+      octx.strokeStyle = "rgba(122,162,255,.7)";
+      octx.lineWidth = 2;
+      octx.fillRect(x1, top, x2 - x1, axes.plotH);
+      octx.strokeRect(x1, top, x2 - x1, axes.plotH);
+      octx.restore();
+    }
+  }
+
+  drawDeltaTLabel(octx, marginL, plotW, th);
+}
+
+// Draw the current view (grid, points, regression, selection band, marker) into ctx,
+// a w×h canvas region. Returns the plot geometry, or null when there's no data.
+function renderPlot(ctx, w, h, th) {
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#070914";
+  ctx.fillStyle = th.bg;
   ctx.fillRect(0, 0, w, h);
 
-  if (!state.data) return;
+  if (!state.data) return null;
 
-  const axes = drawAxes(ctx, w, h);
+  const axes = drawAxes(ctx, w, h, th);
   const { marginL, plotW, plotH } = axes;
 
   const t = state.data.t || [];
@@ -347,7 +401,7 @@ function draw() {
     if (selMax > selMin) {
       const x1 = (selMin - state.xMin) / (state.xMax - state.xMin) * plotW;
       const x2 = (selMax - state.xMin) / (state.xMax - state.xMin) * plotW;
-      ctx.fillStyle = "rgba(255,255,255,.08)";
+      ctx.fillStyle = th.selFill;
       ctx.fillRect(x1, 0, x2 - x1, plotH);
     }
   }
@@ -359,7 +413,7 @@ function draw() {
     const arr = state.data.series[name];
     if (!arr || !arr.length) continue;
 
-    ctx.fillStyle = seriesColor(idx);
+    ctx.fillStyle = th.series(idx);
     const r = 4.0;
     for (let i = 0; i < Math.min(t.length, arr.length); i++) {
       const x = t[i], y = arr[i];
@@ -394,7 +448,7 @@ function draw() {
           const p2y = plotH - (y2 - state.yMin) / (state.yMax - state.yMin) * plotH;
 
           ctx.save();
-          ctx.strokeStyle = regressionColor(idx);
+          ctx.strokeStyle = th.regression(idx);
           ctx.lineWidth = 4.0;
           ctx.beginPath();
           ctx.moveTo(p1x, p1y);
@@ -406,12 +460,30 @@ function draw() {
     }
   }
 
+  // Marker for the active sample (clicked point or clicked table row).
+  if (state.activeRow != null) {
+    const ta = t[state.activeRow];
+    if (isFinite(ta) && ta >= state.xMin && ta <= state.xMax) {
+      const dpr = window.devicePixelRatio || 1;
+      const lx = (ta - state.xMin) / (state.xMax - state.xMin) * plotW;
+      ctx.save();
+      ctx.strokeStyle = th.marker;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.setLineDash([6 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(lx, 0);
+      ctx.lineTo(lx, plotH);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   ctx.restore();
 
   const unitLabel = timeUnitLabel();
   if (unitLabel) {
     ctx.save();
-    ctx.fillStyle = "rgba(232,236,255,.65)";
+    ctx.fillStyle = th.unitText;
     ctx.font = `${Math.max(10, Math.round(12 * (window.devicePixelRatio || 1)))}px system-ui`;
     ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
@@ -419,21 +491,64 @@ function draw() {
     ctx.restore();
   }
 
-  // selection rect on overlay (canvas coords)
-  const ov = $("overlay");
-  const octx = ov.getContext("2d");
-  octx.clearRect(0, 0, w, h);
+  return axes;
+}
 
-  if (state.dragRect) {
+// Label the selected time span ("Δt = 1.23 s"), live while dragging and after release.
+function drawDeltaTLabel(octx, marginL, plotW, th = PLOT_THEMES.dark) {
+  const xSpan = state.xMax - state.xMin;
+  if (!(xSpan > 0)) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const plotTop = 4; // must match the translate() in draw()
+  let range = null;
+  const bandTop = plotTop; // selections always span the full plot height
+  if (state.dragging && state.tool === "select" && state.dragRect) {
     const r = state.dragRect;
-    octx.save();
-    octx.fillStyle = "rgba(122,162,255,.15)";
-    octx.strokeStyle = "rgba(122,162,255,.7)";
-    octx.lineWidth = 2;
-    octx.fillRect(r.x, r.y, r.w, r.h);
-    octx.strokeRect(r.x, r.y, r.w, r.h);
-    octx.restore();
+    const xA = Math.max(0, r.x - marginL);
+    const xB = Math.min(plotW, r.x + r.w - marginL);
+    if (xB - xA > 4) {
+      range = [state.xMin + (xA / plotW) * xSpan, state.xMin + (xB / plotW) * xSpan];
+    }
+  } else if (state.selectionRange) {
+    range = state.selectionRange;
   }
+  if (!range) return;
+
+  const dt = range[1] - range[0];
+  if (!(dt > 0)) return;
+
+  // Anchor the label over the visible part of the selection.
+  const visMin = Math.max(range[0], state.xMin);
+  const visMax = Math.min(range[1], state.xMax);
+  if (!(visMax > visMin)) return;
+  const centerX = marginL + ((visMin + visMax) / 2 - state.xMin) / xSpan * plotW;
+
+  const unit = timeUnitLabel();
+  const text = `Δt = ${formatTimeValue(dt)}${unit ? " " + unit : ""}`;
+
+  octx.save();
+  octx.font = `600 ${Math.round(12 * dpr)}px system-ui`;
+  const padX = 7 * dpr;
+  const boxW = octx.measureText(text).width + padX * 2;
+  const boxH = 20 * dpr;
+  const left = Math.min(Math.max(centerX - boxW / 2, marginL + 2 * dpr), marginL + plotW - boxW - 2 * dpr);
+  const top = bandTop + 4 * dpr; // just inside the top edge of the highlight
+
+  octx.fillStyle = th.boxBg;
+  octx.strokeStyle = th.boxBorder;
+  octx.lineWidth = 1 * dpr;
+  octx.beginPath();
+  if (octx.roundRect) octx.roundRect(left, top, boxW, boxH, 6 * dpr);
+  else octx.rect(left, top, boxW, boxH);
+  octx.fill();
+  octx.stroke();
+
+  octx.fillStyle = th.text;
+  octx.textAlign = "center";
+  octx.textBaseline = "middle";
+  octx.fillText(text, left + boxW / 2, top + boxH / 2);
+  octx.restore();
 }
 
 // --- Table ---
@@ -458,12 +573,14 @@ function buildTable() {
   for (let i = 0; i < n; i++) {
     const tr = document.createElement("tr");
     tr.dataset.t = String(t[i]);
+    tr.dataset.i = String(i);
     tr.appendChild(cell(fmt(t[i])));
     for (const name of Object.keys(series)) {
       tr.appendChild(cell(fmt((series[name] || [])[i])));
     }
     body.appendChild(tr);
   }
+  updateTableHighlights(); // keep selection/clicked-row highlights across rebuilds
 
   function cell(text) {
     const td = document.createElement("td");
@@ -479,6 +596,10 @@ function fmt(v) {
 
 // --- Stats + regression ---
 function updateStats() {
+  // "Zoom → Selection" only makes sense with a selection.
+  const zoomSel = $("selectTool");
+  if (zoomSel) zoomSel.disabled = !state.selectionRange;
+
   if (!state.data) {
     state.stats = [];
     renderStats();
@@ -518,9 +639,9 @@ function renderFileTree(opModes) {
     title.textContent = op.name;
     const delOp = document.createElement("button");
     delOp.className = "btn danger";
-    delOp.textContent = "Delete OpMode";
+    delOp.textContent = "Delete OpMode Logs";
     delOp.onclick = async () => {
-      if (!confirm(`Delete OpMode "${op.name}" and all runs?`)) return;
+      if (!confirm(`Delete all logs for OpMode "${op.name}"?`)) return;
       await fetchJson(`/logger/api/delete?opMode=${encodeURIComponent(op.name)}`);
       await refreshOpModeSelection();
       await loadFileTree();
@@ -780,7 +901,67 @@ function updateTableHighlights() {
     const t = Number(row.dataset.t);
     const selected = range && isFinite(t) && t >= range[0] && t <= range[1];
     row.classList.toggle("selected", Boolean(selected));
+    row.classList.toggle("active", state.activeRow != null && Number(row.dataset.i) === state.activeRow);
   }
+}
+
+// Mark one sample as active: dashed line on the plot + highlighted table row.
+function setActiveRow(i, scroll) {
+  state.activeRow = i;
+  updateTableHighlights();
+  if (scroll) scrollToActiveRow();
+  draw();
+}
+
+// Select the time range spanned by table rows a..b (inclusive) on the plot.
+function selectRowRange(a, b) {
+  const t = state.data?.t || [];
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  state.selectionRange = (hi > lo && isFinite(t[lo]) && isFinite(t[hi])) ? [t[lo], t[hi]] : null;
+  updateStats(); // also refreshes table highlights and the Zoom → Selection button
+  draw();
+}
+
+// Table → plot: click a row to mark it; drag across rows (or Shift+click) to select a range.
+function wireTableInteractions() {
+  const body = $("tblBody");
+  if (!body) return;
+  let anchor = null;
+  let dragging = false;
+  const rowIndex = (ev) => {
+    const row = ev.target.closest && ev.target.closest("tr[data-i]");
+    return row ? Number(row.dataset.i) : null;
+  };
+
+  body.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    const i = rowIndex(ev);
+    if (i == null) return;
+    ev.preventDefault(); // no text selection while dragging across rows
+    if (ev.shiftKey && (anchor != null || state.activeRow != null)) {
+      if (anchor == null) anchor = state.activeRow;
+      selectRowRange(anchor, i);
+    } else {
+      anchor = i;
+      setActiveRow(i, false);
+      dragging = true;
+    }
+  });
+  body.addEventListener("pointerover", (ev) => {
+    if (!dragging) return;
+    const i = rowIndex(ev);
+    if (i != null) selectRowRange(anchor, i);
+  });
+  window.addEventListener("pointerup", () => { dragging = false; });
+}
+
+// Highlight the clicked sample's row and bring it into view if the table is open.
+function scrollToActiveRow() {
+  const drawer = $("tableDrawer");
+  const body = $("tblBody");
+  if (state.activeRow == null || !body || !drawer || !drawer.classList.contains("open")) return;
+  const row = body.querySelector(`tr[data-i="${state.activeRow}"]`);
+  if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 function formatRange(range) {
@@ -872,7 +1053,9 @@ async function loadConfig() {
   try {
     const j = await fetchJson("/logger/api/config");
     state.config = j.classes || [];
+    state.configFailed = false;
   } catch (e) {
+    state.configFailed = true;
     state.config = [];
     if (list) list.innerHTML = `<div class="small">Could not load configurable variables (${e.message}).</div>`;
     console.error(e);
@@ -989,12 +1172,35 @@ function buildConfigRow(cls, field) {
     };
   }
   row.appendChild(input);
+
+  // ↺ puts the field back to its value in the code (shown only when it differs).
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "cfgReset";
+  reset.textContent = "↺";
+  reset.onclick = (ev) => {
+    ev.preventDefault(); // the row is a <label>; don't also activate the input
+    saveConfigValue(cls, field, input, null, true);
+  };
+  input.resetBtn = reset;
+  syncResetButton(reset, field);
+  row.appendChild(reset);
   return row;
 }
 
-async function saveConfigValue(cls, field, input, value) {
+function syncResetButton(btn, field) {
+  const differs = field.codeValue !== undefined && field.value !== field.codeValue;
+  btn.classList.toggle("visible", differs);
+  btn.disabled = !differs;
+  const code = field.codeValue === null ? "null" : field.codeValue;
+  btn.title = differs ? `Reset to value in code: ${code}` : "";
+  btn.setAttribute("aria-label", differs ? `Reset ${field.name} to ${code}` : "");
+}
+
+async function saveConfigValue(cls, field, input, value, reset = false) {
   const url = `/logger/api/setconfig?class=${encodeURIComponent(cls.name)}` +
-    `&field=${encodeURIComponent(field.name)}&value=${encodeURIComponent(value)}`;
+    `&field=${encodeURIComponent(field.name)}` +
+    (reset ? "&reset=1" : `&value=${encodeURIComponent(value)}`);
   input.classList.remove("error", "saved");
   try {
     const res = await fetch(cacheBust(url), { cache: "no-store" });
@@ -1011,6 +1217,7 @@ async function saveConfigValue(cls, field, input, value) {
     input.classList.remove("dirty");
     input.classList.add("saved");
     setTimeout(() => input.classList.remove("saved"), 900);
+    if (input.resetBtn) syncResetButton(input.resetBtn, field);
   } catch (e) {
     input.classList.add("error");
     input.title = String(e.message || e);
@@ -1099,6 +1306,7 @@ async function loadData() {
   const seriesNames = Object.keys(j.series || {});
   state.visible = new Set(seriesNames);
   state.selectionRange = null;
+  state.activeRow = null;
 
   setStatus(`${state.opMode} / ${state.run} (${seriesNames.length} series)`);
 
@@ -1153,8 +1361,6 @@ function wireControls() {
     await loadRuns();
   };
 
-  const refreshConfig = $("refreshConfig");
-  if (refreshConfig) refreshConfig.onclick = () => loadConfig();
 
   $("runSel").onchange = async () => {
     const next = $("runSel").value;
@@ -1229,6 +1435,20 @@ function installCanvasInteractions() {
 
     const dpr = window.devicePixelRatio || 1;
 
+    // A click (no real drag) on a data point selects its table row and keeps any time selection.
+    const s0 = state.dragStart;
+    const moved = Math.hypot(ev.offsetX * dpr - s0.px, ev.offsetY * dpr - s0.py) > 4 * dpr;
+    if (!moved) {
+      const hit = findNearestPoint(ev.offsetX * dpr, ev.offsetY * dpr, dpr);
+      if (hit) {
+        state.dragRect = null;
+        setActiveRow(hit.i, true);
+        return;
+      }
+      state.activeRow = null;
+      updateTableHighlights();
+    }
+
     const metrics = getPlotMetrics(dpr);
     const marginL = metrics.marginL;
     const marginT = metrics.marginT;
@@ -1238,13 +1458,11 @@ function installCanvasInteractions() {
     if (state.tool === "select" && state.dragRect) {
       const r = state.dragRect;
 
-      // translate rect coords into plot-local coords
+      // translate rect x into plot-local coords (selection is time-only, full height)
       const xA = Math.max(0, r.x - marginL);
-      const yA = Math.max(0, r.y - marginT);
       const xB = Math.min(plotW, (r.x + r.w) - marginL);
-      const yB = Math.min(plotH, (r.y + r.h) - marginT);
 
-      if (xB - xA > 4 && yB - yA > 4) {
+      if (xB - xA > 4) {
         const x1 = state.xMin + (xA / plotW) * (state.xMax - state.xMin);
         const x2 = state.xMin + (xB / plotW) * (state.xMax - state.xMin);
         state.selectionRange = [Math.min(x1, x2), Math.max(x1, x2)];
@@ -1314,14 +1532,50 @@ function installCanvasInteractions() {
   });
 }
 
+// Series colors follow the page theme (brighter on dark, deeper on light).
 function seriesColor(idx) {
-  const hue = (idx * 67) % 360;
-  return `hsla(${hue}, 85%, 65%, 0.9)`;
+  return plotTheme().series(idx);
 }
 
 function regressionColor(idx) {
-  const hue = (idx * 67) % 360;
-  return `hsla(${hue}, 90%, 40%, 1)`;
+  return plotTheme().regression(idx);
+}
+
+// --- Light/dark page theme ---
+const THEME_KEY = "ftcLogger.theme";
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function plotTheme() {
+  return PLOT_THEMES[currentTheme()];
+}
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* optional */ }
+  updateThemeToggle();
+  updateToggleUI(); // plot cursor color
+  // Recolor everything that bakes in series colors.
+  buildSeriesToggles(Object.keys(state.data?.series || {}));
+  renderStats();
+  draw();
+}
+
+function updateThemeToggle() {
+  const btn = $("themeToggle");
+  if (!btn) return;
+  const label = currentTheme() === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+}
+
+function wireThemeToggle() {
+  const btn = $("themeToggle");
+  if (!btn) return;
+  btn.onclick = () => setTheme(currentTheme() === "dark" ? "light" : "dark");
+  updateThemeToggle();
 }
 
 function zoomToSelection() {
@@ -1363,36 +1617,305 @@ function zoomToSelection() {
 function updateHover(ev) {
   if (!state.data) return;
 
-  const wrap = document.querySelector(".canvasWrap");
-  const timeBox = $("hoverTime");
-  if (!wrap || !timeBox) return;
-
   const dpr = window.devicePixelRatio || 1;
-  const pxCss = ev.offsetX;
-  const pyCss = ev.offsetY;
-  const px = pxCss * dpr;
-  const py = pyCss * dpr;
+  const px = ev.offsetX * dpr;
+  const py = ev.offsetY * dpr;
 
-  const metrics = getPlotMetrics(dpr);
-  const marginL = metrics.marginL;
-  const marginT = metrics.marginT;
-  const plotW = metrics.plotW;
-  const plotH = metrics.plotH;
-
+  const { marginL, marginT, plotW, plotH } = getPlotMetrics(dpr);
   const inPlot = px >= marginL && px <= marginL + plotW && py >= marginT && py <= marginT + plotH;
   if (!inPlot) {
     clearHover();
     return;
   }
 
-  const dataX = state.xMin + ((px - marginL) / plotW) * (state.xMax - state.xMin);
-  const unit = timeUnitLabel();
-  timeBox.textContent = `${formatTimeValue(dataX)}${unit}`;
-  const timeLeft = (marginL / dpr) + 16;
-  timeBox.style.left = timeLeft + "px";
-  timeBox.style.opacity = "1";
+  updatePointTooltip(px, py, dpr);
+}
 
-  return;
+// Show "(t, value)" for the nearest visible data point within a few pixels of the cursor.
+const POINT_HOVER_RADIUS_CSS = 10;
+
+function updatePointTooltip(px, py, dpr) {
+  const tip = $("hoverPoint");
+  const plot = $("plot");
+  if (!tip || !plot || !state.data) return;
+
+  const best = findNearestPoint(px, py, dpr);
+  if (!best) {
+    tip.style.opacity = "0";
+    return;
+  }
+
+  const unit = timeUnitLabel();
+  tip.textContent = `(${formatTimeValue(best.x)}${unit ? " " + unit : ""}, ${formatHoverValue(best.y)})`;
+  tip.style.borderColor = seriesColor(best.idx);
+  positionPointTooltip(tip, plot, best, dpr);
+}
+
+// Nearest visible data point within POINT_HOVER_RADIUS_CSS of canvas pixel (px, py), or null.
+// Returns { x, y, i (sample index), idx (series index), ptX, ptY (canvas px) }.
+function findNearestPoint(px, py, dpr) {
+  if (!state.data) return null;
+  const { marginL, plotW, plotH } = getPlotMetrics(dpr);
+  const plotTop = 4; // must match the translate() in draw()
+  const t = state.data.t || [];
+  const series = state.data.series || {};
+  const names = Object.keys(series);
+  const xSpan = state.xMax - state.xMin;
+  const ySpan = state.yMax - state.yMin;
+  const maxDist = POINT_HOVER_RADIUS_CSS * dpr;
+
+  let best = null;
+  let bestD2 = maxDist * maxDist;
+  for (let idx = 0; idx < names.length; idx++) {
+    const name = names[idx];
+    if (!state.visible.has(name)) continue;
+    const arr = series[name] || [];
+    const n = Math.min(t.length, arr.length);
+    for (let i = 0; i < n; i++) {
+      const x = t[i], y = arr[i];
+      if (!isFinite(x) || !isFinite(y)) continue;
+      if (x < state.xMin || x > state.xMax || y < state.yMin || y > state.yMax) continue;
+      const ptX = marginL + (x - state.xMin) / xSpan * plotW;
+      const ptY = plotTop + plotH - (y - state.yMin) / ySpan * plotH;
+      const dx = ptX - px, dy = ptY - py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = { x, y, i, idx, ptX, ptY };
+      }
+    }
+  }
+  return best;
+}
+
+function positionPointTooltip(tip, plot, best, dpr) {
+  // Position just above-right of the point, flipping to stay inside the canvas.
+  const ptXCss = plot.offsetLeft + best.ptX / dpr;
+  const ptYCss = plot.offsetTop + best.ptY / dpr;
+  const tipW = tip.offsetWidth;
+  const tipH = tip.offsetHeight;
+  const gap = 8;
+  let left = ptXCss + gap;
+  let top = ptYCss - tipH - gap;
+  if (left + tipW > plot.offsetLeft + plot.clientWidth) left = ptXCss - tipW - gap;
+  if (top < plot.offsetTop) top = ptYCss + gap;
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+  tip.style.opacity = "1";
+}
+
+function formatHoverValue(v) {
+  if (!isFinite(v)) return "—";
+  if (v !== 0 && Math.abs(v) < 0.001) return v.toExponential(2);
+  return String(Number(v.toPrecision(4)));
+}
+
+// --- PNG export dialog ---
+const EXPORT_PREFS_KEY = "ftcLogger.exportPrefs";
+
+function loadExportPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY) || "{}");
+    return { legend: p.legend || "bottom", theme: p.theme || currentTheme() };
+  } catch (_) {
+    return { legend: "bottom", theme: currentTheme() };
+  }
+}
+
+function saveExportPrefs(prefs) {
+  try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs)); } catch (_) { /* optional */ }
+}
+
+function exportOptions() {
+  return { legend: $("exportLegend").value, theme: $("exportTheme").value };
+}
+
+function openExportDialog() {
+  const plot = $("plot");
+  if (!plot || !plot.width || !plot.height || !state.data) return;
+  const prefs = loadExportPrefs();
+  $("exportLegend").value = prefs.legend;
+  $("exportTheme").value = prefs.theme;
+  $("exportModal").classList.remove("hidden");
+  updateExportPreview();
+  $("exportSave").focus();
+}
+
+function closeExportDialog() {
+  $("exportModal").classList.add("hidden");
+  $("exportPreview").innerHTML = "";
+}
+
+function updateExportPreview() {
+  const opts = exportOptions();
+  saveExportPrefs(opts);
+  const preview = $("exportPreview");
+  preview.innerHTML = "";
+  preview.appendChild(renderExportCanvas(opts));
+}
+
+function wireExportDialog() {
+  $("downloadPng").onclick = () => openExportDialog();
+  $("exportLegend").onchange = updateExportPreview;
+  $("exportTheme").onchange = updateExportPreview;
+  $("exportCancel").onclick = closeExportDialog;
+  $("exportBackdrop").onclick = closeExportDialog;
+  $("exportSave").onclick = () => {
+    savePng(renderExportCanvas(exportOptions()));
+    closeExportDialog();
+  };
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !$("exportModal").classList.contains("hidden")) closeExportDialog();
+  });
+}
+
+// Render the current view at screen resolution with the chosen theme and legend placement.
+function renderExportCanvas({ legend, theme }) {
+  const th = PLOT_THEMES[theme] || PLOT_THEMES.dark;
+  const plot = $("plot");
+  const dpr = window.devicePixelRatio || 1;
+  const w = plot.width, h = plot.height;
+
+  const names = Object.keys(state.data?.series || {});
+  const items = names
+    .map((name, idx) => ({ name, color: th.series(idx) }))
+    .filter((it) => state.visible.has(it.name));
+  const showLegend = legend !== "none" && items.length > 0;
+
+  // Legend metrics (device pixels).
+  const font = `${Math.round(13 * dpr)}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+  const measure = document.createElement("canvas").getContext("2d");
+  measure.font = font;
+  const sw = 10 * dpr;       // swatch size
+  const swGap = 6 * dpr;     // swatch → text
+  const itemGap = 18 * dpr;  // between items in a row
+  const rowH = 20 * dpr;
+  const pad = 10 * dpr;
+  for (const it of items) it.w = sw + swGap + measure.measureText(it.name).width;
+
+  // Wrap items into centered rows for top/bottom legends.
+  let rows = [];
+  if (showLegend && (legend === "top" || legend === "bottom")) {
+    const maxW = w - pad * 2;
+    let row = [], rowW = 0;
+    for (const it of items) {
+      const add = (row.length ? itemGap : 0) + it.w;
+      if (row.length && rowW + add > maxW) { rows.push({ items: row, w: rowW }); row = []; rowW = 0; }
+      rowW += (row.length ? itemGap : 0) + it.w;
+      row.push(it);
+    }
+    if (row.length) rows.push({ items: row, w: rowW });
+  }
+  const bandH = rows.length ? rows.length * rowH + pad : 0;
+  const colW = showLegend ? Math.max(...items.map((it) => it.w)) : 0;
+  const rightW = showLegend && legend === "right" ? colW + pad * 2 : 0;
+
+  const offY = legend === "top" ? bandH : 0;
+  const out = document.createElement("canvas");
+  out.width = Math.round(w + rightW);
+  out.height = Math.round(h + bandH);
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = th.bg;
+  ctx.fillRect(0, 0, out.width, out.height);
+
+  // The plot itself, plus the Δt label for a committed selection.
+  ctx.save();
+  ctx.translate(0, offY);
+  const axes = renderPlot(ctx, w, h, th);
+  if (axes && state.selectionRange) drawDeltaTLabel(ctx, axes.marginL, axes.plotW, th);
+  ctx.restore();
+
+  if (!showLegend || !axes) return out;
+
+  const drawItem = (it, x, yMid) => {
+    ctx.fillStyle = it.color;
+    ctx.beginPath();
+    ctx.arc(x + sw / 2, yMid, sw / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = th.text;
+    ctx.fillText(it.name, x + sw + swGap, yMid);
+  };
+
+  ctx.save();
+  ctx.font = font;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const plotTop = 4; // must match the translate() in renderPlot()
+  const plotLeft = axes.marginL;
+
+  if (legend === "top" || legend === "bottom") {
+    // Center the legend under/over the plot area (not the y-axis labels).
+    const centerX = plotLeft + axes.plotW / 2;
+    const y0 = legend === "top" ? pad / 2 : offY + h;
+    rows.forEach((row, r) => {
+      let x = Math.max(pad, Math.min(centerX - row.w / 2, out.width - pad - row.w));
+      const yMid = y0 + r * rowH + rowH / 2;
+      for (const it of row.items) { drawItem(it, x, yMid); x += it.w + itemGap; }
+    });
+  } else if (legend === "right") {
+    const x = w + pad;
+    items.forEach((it, r) => drawItem(it, x, offY + plotTop + pad + r * rowH + rowH / 2));
+  } else if (legend === "corner") {
+    const boxW = colW + pad * 2;
+    const boxH = items.length * rowH + pad;
+    const bx = plotLeft + axes.plotW - boxW - 8 * dpr;
+    const by = offY + plotTop + 8 * dpr;
+    ctx.fillStyle = th.boxBg;
+    ctx.strokeStyle = th.frame;
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, boxW, boxH, 6 * dpr); else ctx.rect(bx, by, boxW, boxH);
+    ctx.fill();
+    ctx.stroke();
+    items.forEach((it, r) => drawItem(it, bx + pad, by + pad / 2 + r * rowH + rowH / 2));
+  }
+  ctx.restore();
+  return out;
+}
+
+function savePng(canvas) {
+  canvas.toBlob((blob) => {
+    if (blob) downloadBlob(blob, runFileBase("plot") + ".png");
+  }, "image/png");
+}
+
+// "OpMode_Run" for download file names, or the fallback when no run is loaded.
+function runFileBase(fallback) {
+  const parts = [state.opMode, state.run].filter(Boolean).map(sanitizeName);
+  return parts.length ? parts.join("_") : fallback;
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Every sample of the loaded run (not just the rows the table shows), full precision.
+function downloadCsv() {
+  const t = state.data?.t || [];
+  if (!t.length) return;
+  const series = state.data.series || {};
+  const names = Object.keys(series);
+  const unit = timeUnitLabel();
+
+  const esc = (v) => {
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const num = (v) => (typeof v === "number" && isFinite(v) ? String(v) : "");
+
+  const lines = [[unit ? `t (${unit})` : "t", ...names].map(esc).join(",")];
+  for (let i = 0; i < t.length; i++) {
+    lines.push([num(t[i]), ...names.map((n) => num((series[n] || [])[i]))].join(","));
+  }
+  const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  downloadBlob(blob, runFileBase("data") + ".csv");
 }
 
 function updateToggleUI() {
@@ -1406,13 +1929,13 @@ function updateToggleUI() {
   if (table && drawer) table.classList.toggle("active", drawer.classList.contains("open"));
   if (manage && modal) manage.classList.toggle("active", !modal.classList.contains("hidden"));
   if (canvas) {
-    canvas.style.cursor = state.tool === "pan" ? "grab" : CROSSHAIR_CURSOR;
+    canvas.style.cursor = state.tool === "pan" ? "grab" : crosshairCursor();
   }
 }
 
 function clearHover() {
-  const timeBox = $("hoverTime");
-  if (timeBox) timeBox.style.opacity = "0";
+  const tip = $("hoverPoint");
+  if (tip) tip.style.opacity = "0";
 }
 
 // A click on the plot clears the selection but keeps the current zoom (use Extents to reset).
@@ -1565,6 +2088,21 @@ function applyControlState(j) {
     loadControlOpModes();
   }
 
+  // INIT and STOP are when OpMode code usually changes static fields: show the current values,
+  // unless the user is in the middle of editing one.
+  if (changed && (next === "init" || (next === "stopped" && prevState !== "unavailable"))) {
+    const list = $("configList");
+    const editing = list && (list.contains(document.activeElement) || list.querySelector(".cfgInput.dirty"));
+    if (!editing) loadConfig();
+  }
+
+  // Reconnected (e.g. after installing a new build): @Configurable classes may have changed.
+  // On the first connection the page's own startup load covers it, unless that load failed.
+  if (next !== "unavailable" && prevState === "unavailable") {
+    if (opCtl.wasConnected || state.configFailed) loadConfig();
+    opCtl.wasConnected = true;
+  }
+
   renderControlState();
 
   if (j && j.telemetry) {
@@ -1593,11 +2131,63 @@ function scheduleControlPoll() {
 
 async function pollControlState() {
   if (document.hidden) return;
+  const t0 = performance.now();
   try {
     const tseq = encodeURIComponent(opCtl.telemetrySeq || "");
-    applyControlState(await controlApi(`/logger/api/control/state?tseq=${tseq}`));
+    const j = await controlApi(`/logger/api/control/state?tseq=${tseq}`);
+    updateHeaderStatus(j, performance.now() - t0);
+    applyControlState(j);
   } catch (_) {
+    updateHeaderStatus(null, null);
     applyControlState(null);
+  }
+}
+
+// --- Header: connection, ping, battery ---
+const header = { pingMs: null };
+
+// Color cutoffs for the header readouts (text turns yellow at WARN, red at BAD).
+// FTC documents a ping under 20 ms as a good link and ~12 V as a healthy, charged battery;
+// the Driver Station's exact yellow/red numbers aren't published, so the others are estimates.
+const PING_WARN_MS = 20;    // >= this: yellow (FTC wiki: "< 20 msec" is a good connection)
+const PING_BAD_MS = 100;    // >= this, or no response: red (estimate)
+const BATT_WARN_V = 12.0;   // below this: yellow (FTC: ~12 V is healthy and charged)
+const BATT_BAD_V = 11.0;    // below this: red (estimate)
+
+function updateHeaderStatus(j, rttMs) {
+  const conn = $("hdrConn");
+  const connText = $("hdrConnText");
+  const ping = $("hdrPing");
+  const pingText = $("hdrPingText");
+  const batt = $("hdrBatt");
+  const battText = $("hdrBattText");
+  if (!conn) return;
+
+  const reachable = !!j;
+  const connState = !reachable ? "disconnected" : (j.ready ? "connected" : "notready");
+  conn.dataset.state = connState;
+  connText.textContent = { connected: "Connected", notready: "Robot not ready", disconnected: "Disconnected" }[connState];
+
+  // Smooth the ping so the number doesn't jitter on every poll.
+  if (reachable && isFinite(rttMs)) {
+    header.pingMs = header.pingMs == null ? rttMs : header.pingMs * 0.7 + rttMs * 0.3;
+    const ms = Math.round(header.pingMs);
+    pingText.textContent = `${ms} ms`;
+    ping.dataset.level = ms < PING_WARN_MS ? "good" : ms < PING_BAD_MS ? "warn" : "bad";
+  } else {
+    // No response from the robot: show "no ping" in red.
+    header.pingMs = null;
+    pingText.textContent = "—";
+    ping.dataset.level = reachable ? "none" : "bad";
+  }
+
+  const v = reachable ? j.batteryVoltage : null;
+  if (typeof v === "number" && isFinite(v)) {
+    battText.textContent = `${v.toFixed(2)} V`;
+    batt.dataset.level = v >= BATT_WARN_V ? "good" : v >= BATT_BAD_V ? "warn" : "bad";
+  } else {
+    battText.textContent = "—";
+    batt.dataset.level = "none";
   }
 }
 
@@ -1769,6 +2359,7 @@ async function startFollowing(op, run) {
   state.tUnit = "s";
   state.visible = new Set();
   state.selectionRange = null;
+  state.activeRow = null;
   buildSeriesToggles([]);
   computeFullExtents();
   setViewportToFull();
@@ -1975,6 +2566,10 @@ window.addEventListener("resize", () => { resizeCanvases(); draw(); });
   try {
     bindDrawerButtons();
     wireControls();
+    wireTableInteractions();
+    wireExportDialog();
+    wireThemeToggle();
+    $("downloadCsv").onclick = downloadCsv;
     wireOpModeControl();
     wireLiveToggle();
     installCanvasInteractions();

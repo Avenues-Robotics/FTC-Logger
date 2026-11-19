@@ -14,16 +14,20 @@ FTC Logger allows you to write logs from within an OpMode to JSONL files on the 
 
 ## How to add to your Robot Controller
 1) Download and extract the ZIP file of this repository.
-2) Add the full `logger` folder to your teamcode folder (dev-tools and demoOpModes are optional and can be deleted).
+2) Add the full `logger` folder to your teamcode folder (dev-tools and demoOpModes are optional and can be deleted). That's all: no Gradle or other setup is needed.
 3) Follow the instructions below to use it in an OpMode
 
 ## How to use in an OpMode
-1) Create a `LogWriter` object.
-2) Use ElapsedTime() to track time (use seconds, milliseconds, or nanoseconds).
-3) Write log lines once per loop with a simple call: `logger.logMilliseconds(t, "armEncoder", pos, "armPower", armPower);`
+Graph from the same object you already use for telemetry:
+
+1) Create a `LoggerTelemetry`: `LoggerTelemetry telemetry = new LoggerTelemetry(this);`
+2) Each loop, add values to the graph: `telemetry.addGraph("test encoder", pos, "test power", testPower);`
+3) Call `telemetry.update()` as usual. It sends telemetry to the Driver Station **and** writes one graph row. Time (in seconds) is added for you.
+
+`LoggerTelemetry` is regular telemetry plus `addGraph`. `addData`, `addLine`, `log()` and every other telemetry call are unaffected.
 
 ### Example OpMode
-This assumes you have a motor and encoder plugged into your Robot Controller and named `armMotor` in your configuration.
+This assumes you have a motor and encoder plugged into your Robot Controller and named `testMotor` in your configuration. It's the same as `demoOpModes/LoggerDemoOneMotor.java`.
 
 ```java
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
@@ -31,54 +35,63 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.logger.LogWriter;
-
+import org.firstinspires.ftc.teamcode.logger.java.LoggerTelemetry;
 
 @TeleOp(name = "Sample Logger Op Mode", group = "Logger")
 public class SampleLoggerOpMode extends LinearOpMode {
     private ElapsedTime runtime = new ElapsedTime();
-    private LogWriter logger = null;
-    private DcMotor armMotor = null;
-    private double armPower = 1.0;
-    
+    private DcMotor testMotor = null;
+    private double testPower = 1.0;
+
     @Override
     public void runOpMode() throws InterruptedException {
-        armMotor = hardwareMap.get(DcMotor.class, "armMotor");
-        logger = new LogWriter(hardwareMap.appContext, getClass().getSimpleName());
-        
-        // Optional check to make sure file can be written 
-        if (!logger.isReady()) {
-            telemetry.addLine("Logger failed to start.");
-            telemetry.addData("Error", logger.getInitError());
-            telemetry.update();
-            return;
-        }
+        testMotor = hardwareMap.get(DcMotor.class, "testMotor");
+
+        // Replaces the OpMode's telemetry for this method: same calls, plus addGraph().
+        LoggerTelemetry telemetry = new LoggerTelemetry(this);
 
         waitForStart();
-        runtime.reset(); // start the opMode timer at 0
+        runtime.reset();
 
-        while (opModeIsActive()) {
-            
-            armMotor.setPower(armPower);
-            armPower -= 0.01;
-            
-            int pos = armMotor.getCurrentPosition();
+        while (opModeIsActive() && runtime.seconds() < 5.0) {
+            testMotor.setPower(testPower);
+            testPower -= 0.01;
 
-            //get the current time in milliseconds
-            double t = runtime.milliseconds(); 
+            int pos = testMotor.getCurrentPosition();
 
-            // Write one line to the log file.
-            // The first argument is the current time
-            // The rest of the arguments are key, value pairs
-            logger.logMilliseconds(t, "armEncoder", pos, "armPower", armPower);
-
+            telemetry.addData("Motor encoder", pos);                            // Driver Station
+            telemetry.addGraph("test encoder", pos, "test power", testPower);   // graph: name, value pairs
+            telemetry.update();                                                 // sends both
         }
     }
 }
 ```
 
+### Details
+- `addGraph` can be called several times before `update()`; all values go into the same row. Reusing a name replaces its value.
+- Graph time starts at 0 on the first row. `resetGraphTime()` restarts it (for example, right after `waitForStart()` if you graphed during INIT).
+- The log file is created on the first graph row (OpModes that never graph don't leave empty runs) and closed automatically when the OpMode stops.
+- If the log file can't be created, a message is added to the Driver Station telemetry log and the OpMode keeps running.
+- To also send telemetry to FTC Dashboard, wrap it: `new LoggerTelemetry(new MultipleTelemetry(telemetry, dashboard.getTelemetry()), hardwareMap.appContext, "MyOpMode")`.
+
+### Advanced: writing logs directly with `LogWriter`
+`LoggerTelemetry` writes through `LogWriter`. Use `LogWriter` yourself if you need to control the timestamps (your own clock, or milliseconds/nanoseconds), or log without telemetry:
+
+```java
+import org.firstinspires.ftc.teamcode.logger.java.LogWriter;
+
+LogWriter logger = new LogWriter(hardwareMap.appContext, getClass().getSimpleName());
+if (!logger.isReady()) {
+    telemetry.addData("Logger failed to start", logger.getInitError());
+}
+// ...each loop: time first, then name, value pairs
+logger.logMilliseconds(runtime.milliseconds(), "test encoder", pos, "test power", testPower);
+// ...when done
+logger.close();
+```
+
 ## Configurable variables
-Mark any class in TeamCode with `@Configurable` and its `public static` (non-final) fields show up in the **Configurable** panel under the Series list. Values can be edited from the browser while the robot is running.
+Mark any class in TeamCode with `@Configurable` and its `public static` (non-final) fields show up in the **Configurable** panel. Values can be edited from the browser while the robot is running.
 
 ```java
 import org.firstinspires.ftc.teamcode.logger.java.Configurable;
@@ -97,13 +110,14 @@ public class ArmTuner extends LinearOpMode {
 - Supported types: `int`, `long`, `short`, `byte`, `double`, `float`, `boolean` (and boxed versions), `String`, and enums. `final` fields and other types are not shown.
 - Type a value and press Enter (or click away) to send it. A green border means it was applied; red means it was rejected (hover for the reason). Esc reverts.
 - Changes take effect the next time your code reads the field, so read the field inside your loop for live tuning. Values are not saved: they reset to the defaults in your code when the Robot Controller app restarts.
-- Click ↻ to reload the current values from the robot.
+- Click ↺ next to a value to reset it to the value in your code. It only appears when the value has been changed.
+- The panel reloads the current values automatically when an OpMode is initialized or stops, and when the robot reconnects (for example after installing a new build, so new `@Configurable` classes show up).
 - Classes are found by scanning the installed TeamCode APK, so this works for code built with Android Studio (not OnBot Java).
 
 ## Viewing logs
 - Connect to the Robot Controller WiFi, then open a browser to `http://192.168.43.1:8080/logger`
 - The UI allows you to select an OpMode and choose from multiple runs.
-- The File Manager allows you to rename or delete log files.
+- The Log Manager allows you to rename or delete log files.
 
 ## Running OpModes from the web UI
 The **Robot** panel in the top left works like the Driver Station:
@@ -113,10 +127,6 @@ The **Robot** panel in the top left works like the Driver Station:
 - Press **Space** at any time while an OpMode is initialized or running to stop it (e-stop). It works wherever the keyboard focus is.
 
 The panel follows changes made from the Driver Station as well.
-
-### Layout
-- **Column 1:** Robot controls and Configurable variables.
-- **Column 2:** Telemetry, then the log picker (OpMode / Run, **Manage**) together with the plot's Series checkboxes.
 
 ### Live plot
 While an OpMode is initialized or running, the plot follows the log file it is writing and updates about four times a second. The **Live** button in the plot toolbar turns this on or off; its dot pulses red while following.
@@ -134,21 +144,6 @@ Telemetry is read from the SDK's own telemetry object, so it works without any c
 
 > Safety: the robot will move when you press ▶. Keep a Driver Station connected so you can stop it, because the Driver Station's emergency stop still applies.
 
-## API summary
-- `GET /logger/api/opmodes`
-- `GET /logger/api/runs?opMode=NAME`
-- `GET /logger/api/run?opMode=NAME&run=RUN`
-- `GET /logger/api/data?opMode=NAME&run=RUN[&offset=BYTES]` (pass back the returned `offset` to get only new rows)
-- `GET /logger/api/fs`
-- `GET /logger/api/rename?opMode=NAME&run=RUN&base=BASE&suffix=SUFFIX`
-- `GET /logger/api/delete?opMode=NAME&run=RUN`
-- `GET /logger/api/config`
-- `GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&value=VALUE`
-- `GET /logger/api/control/opmodes`
-- `GET /logger/api/control/state[?tseq=SEQ]` (includes `liveOpMode`/`liveRun`, and `telemetry` when it changed since `tseq`)
-- `GET /logger/api/control/init?name=OPMODE_NAME`
-- `GET /logger/api/control/start`
-- `GET /logger/api/control/stop`
 
 ## Dev tools
 The `dev-tools` folder contains a lightweight local server, a fake robot, and a sample log file so you can iterate on the UI without deploying to a Robot Controller.
@@ -156,7 +151,17 @@ The `dev-tools` folder contains a lightweight local server, a fake robot, and a 
 - Location: `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools`
 - UI assets: `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/web`
 - `logger-dev-server.py`: serves the local UI and can proxy the API or serve fake data
+- `build-web-assets.py`: compiles `web/*` into `java/WebAssets.java` (see below)
 - `0001.jsonl`: sample log file used by the dev server
+
+### Editing the web UI
+The robot serves the web UI from `java/WebAssets.java`, a generated file that contains `web/index.html`, `web/style.css` and `web/app.js`. That's what lets teams install the logger by copying one folder, with no Gradle changes. Don't edit `WebAssets.java` by hand: edit the files in `web/`, then regenerate it before building for the robot or committing:
+
+```bash
+python3 TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools/build-web-assets.py
+```
+
+The dev server always serves `web/` directly, and prints a warning in its terminal when `WebAssets.java` is out of date. `build-web-assets.py --check` exits with an error when it's out of date (useful in CI or a pre-commit hook).
 
 ### Run with fake data
 ```bash
@@ -181,7 +186,7 @@ With `--fake`, the **Robot** panel drives a simulated robot:
 The fake OpModes also send telemetry (status, arm position, power, gains, and log lines), so the Telemetry panel and live plot can be tried without a robot.
 
 - INIT takes a moment to apply, as on a real robot.
-- Each INIT creates a new run file (`0002.jsonl`, `0003.jsonl`, ...) under the `DEV_TEST` OpMode, like `new LogWriter(...)` does, and START fills it. The plot follows it live.
+- Each INIT creates a new run file (`0002.jsonl`, `0003.jsonl`, ...) under the `DEV_TEST` OpMode, and START fills it. The plot follows it live.
 - The arm simulation reads the fake Configurable values every tick: `ArmConstants.kP`, `kD` and `maxPower`, plus `DEV_TEST.targetPosition` and `mode` (`IDLE` cuts power). Change them in the Configurable panel and the next run, or the current one, reflects it.
 - New runs are written next to the script by default. Use `--fake-dir PATH` to keep them somewhere else, or delete them from **Manage Log Files**.
 

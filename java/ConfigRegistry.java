@@ -2,7 +2,10 @@ package org.firstinspires.ftc.teamcode.logger.java;
 
 import android.content.Context;
 
+import com.qualcomm.ftccommon.FtcEventLoop;
 import com.qualcomm.robotcore.util.RobotLog;
+
+import org.firstinspires.ftc.ftccommon.external.OnCreateEventLoop;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -14,7 +17,9 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import dalvik.system.DexFile;
 
@@ -22,7 +27,9 @@ import dalvik.system.DexFile;
  * Finds {@link Configurable} classes in the TeamCode package and reads/writes their
  * public static fields via reflection.
  *
- * The APK is scanned once (on the first request) and the class list is cached.
+ * The APK is scanned once and the class list is cached. The scan runs in the background when
+ * the robot starts (before any OpMode can change a field), and records each field's starting
+ * value: the value written in the code, which the web UI can reset a field back to.
  * Values are always read fresh, so the dashboard shows the current value of each field.
  */
 public final class ConfigRegistry {
@@ -32,8 +39,21 @@ public final class ConfigRegistry {
     private static final String LOGGER_IMPL_PREFIX = "org.firstinspires.ftc.teamcode.logger.java.";
 
     private static List<Class<?>> cachedClasses = null;
+    /** Each field's value as written in the code (captured at the first scan). */
+    private static final Map<Field, Object> codeValues = new HashMap<>();
 
     private ConfigRegistry() { }
+
+    /** Scans at robot startup so code values are captured before any OpMode runs. */
+    @OnCreateEventLoop
+    public static void scanOnStartup(Context context, FtcEventLoop eventLoop) {
+        final Context app = context.getApplicationContext();
+        Thread t = new Thread(() -> {
+            synchronized (ConfigRegistry.class) { getClasses(app); }
+        }, "FtcLoggerConfigScan");
+        t.setDaemon(true);
+        t.start();
+    }
 
     /**
      * Returns all configurable classes and their fields.
@@ -42,7 +62,7 @@ public final class ConfigRegistry {
      *   "classes": [
      *     { "name": "org...ArmTuner", "simpleName": "ArmTuner", "displayName": "ArmTuner",
      *       "outerSimpleName": "ArmTuner",
-     *       "fields": [ { "name": "kP", "type": "double", "value": "0.01" }, ... ] }
+     *       "fields": [ { "name": "kP", "type": "double", "value": "0.01", "codeValue": "0.01" }, ... ] }
      *   ]
      * }
      */
@@ -73,25 +93,37 @@ public final class ConfigRegistry {
      */
     public static synchronized JSONObject setJson(Context context, String className, String fieldName, String value)
             throws JSONException {
+        Field field = findField(context, className, fieldName);
+        return assign(field, parse(field.getType(), value));
+    }
+
+    /** Sets a field back to its value in the code and returns the field's new state. */
+    public static synchronized JSONObject resetJson(Context context, String className, String fieldName)
+            throws JSONException {
+        Field field = findField(context, className, fieldName);
+        if (!codeValues.containsKey(field)) throw new IllegalArgumentException("No code value recorded for " + fieldName);
+        return assign(field, codeValues.get(field));
+    }
+
+    private static Field findField(Context context, String className, String fieldName) {
         Class<?> target = null;
         for (Class<?> c : getClasses(context)) {
             if (c.getName().equals(className)) { target = c; break; }
         }
         if (target == null) throw new IllegalArgumentException("Unknown configurable class: " + className);
-
-        Field field = null;
         for (Field f : configurableFields(target)) {
-            if (f.getName().equals(fieldName)) { field = f; break; }
+            if (f.getName().equals(fieldName)) return f;
         }
-        if (field == null) throw new IllegalArgumentException("Unknown or unsupported field: " + fieldName);
+        throw new IllegalArgumentException("Unknown or unsupported field: " + fieldName);
+    }
 
-        Object parsed = parse(field.getType(), value);
+    private static JSONObject assign(Field field, Object value) throws JSONException {
         try {
-            field.set(null, parsed);
+            field.set(null, value);
         } catch (IllegalAccessException e) {
             throw new IllegalArgumentException("Cannot set field: " + e.getMessage());
         }
-        RobotLog.ii(TAG, "Set %s.%s = %s", target.getSimpleName(), fieldName, String.valueOf(parsed));
+        RobotLog.ii(TAG, "Set %s.%s = %s", field.getDeclaringClass().getSimpleName(), field.getName(), String.valueOf(value));
         return new JSONObject().put("ok", true).put("field", fieldJson(field));
     }
 
@@ -127,6 +159,12 @@ public final class ConfigRegistry {
         }
 
         Collections.sort(found, (a, b) -> displayName(a).compareToIgnoreCase(displayName(b)));
+        // Record starting values (reading a field runs the class's static initializer first).
+        for (Class<?> c : found) {
+            for (Field f : configurableFields(c)) {
+                try { codeValues.put(f, f.get(null)); } catch (Throwable ignored) { }
+            }
+        }
         RobotLog.ii(TAG, "Found %d @Configurable classes", found.size());
         cachedClasses = found;
         return found;
@@ -172,7 +210,8 @@ public final class ConfigRegistry {
                 .put("name", f.getName())
                 .put("type", typeName(type))
                 // Always send text so NaN/Infinity and long values survive JSON
-                .put("value", v == null ? JSONObject.NULL : (type.isEnum() ? ((Enum<?>) v).name() : String.valueOf(v)));
+                .put("value", valueText(type, v));
+        if (codeValues.containsKey(f)) o.put("codeValue", valueText(type, codeValues.get(f)));
         if (type.isEnum()) {
             JSONArray opts = new JSONArray();
             Object[] constants = type.getEnumConstants();
@@ -180,6 +219,11 @@ public final class ConfigRegistry {
             o.put("options", opts);
         }
         return o;
+    }
+
+    private static Object valueText(Class<?> type, Object v) {
+        if (v == null) return JSONObject.NULL;
+        return type.isEnum() ? ((Enum<?>) v).name() : String.valueOf(v);
     }
 
     /** Returns a short type name for supported types, or null if unsupported. */

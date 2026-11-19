@@ -4,9 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>FTC Logger</title>
+  <script>
+    // Apply the saved (or system) theme before first paint to avoid a flash.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("ftcLogger.theme"); } catch (e) {}
+      if (t !== "light" && t !== "dark") {
+        t = window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <link rel="stylesheet" href="/logger/style.css" />
 </head>
 <body>
+<header class="appHeader">
+  <div class="appTitle">FTC Logger</div>
+  <div class="robotStatus">
+    <div class="statusItem connStatus" id="hdrConn" data-state="connecting">
+      <span class="statusDot"></span><span id="hdrConnText">Connecting…</span>
+    </div>
+    <div class="statusItem" id="hdrPing" data-level="none" title="Round-trip time from this browser to the robot">
+      <span class="statusLabel">Ping</span><span id="hdrPingText" class="statusValue">—</span>
+    </div>
+    <div class="statusItem" id="hdrBatt" data-level="none" title="Lowest voltage reported by the robot's hubs">
+      <span class="statusLabel">Battery</span><span id="hdrBattText" class="statusValue">—</span>
+    </div>
+    <button id="themeToggle" class="themeToggle" type="button" title="Switch to light mode" aria-label="Switch to light mode">
+      <svg class="iconSun" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>
+      </svg>
+      <svg class="iconMoon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"/>
+      </svg>
+    </button>
+  </div>
+</header>
 <div id="app">
 
   <!-- COLUMN 1: Robot control, configurables -->
@@ -35,7 +69,6 @@
       <div class="panelSection configSection">
         <div class="configHeader">
           <div class="small"><b>Configurable</b></div>
-          <button id="refreshConfig" class="btn btnSmall" title="Reload current values from the robot">↻</button>
         </div>
         <div id="configList"></div>
         <div class="small hint">
@@ -66,7 +99,7 @@
     </div>
 
     <div class="panelSection series">
-      <div class="small"><b>Series</b></div>
+      <div class="small"><b>Show on Graph</b></div>
       <div id="seriesList"></div>
     </div>
   </aside>
@@ -82,19 +115,25 @@
       <!-- Tools are on the RIGHT -->
       <div class="tools">
         <button id="liveToggle" class="btn toggle liveBtn"><span class="liveDot"></span>Live</button>
-        <button id="zoomExtents" class="btn">Extents</button>
-        <button id="zoomIn" class="btn">Zoom +</button>
-        <button id="zoomOut" class="btn">Zoom −</button>
-        <button id="selectTool" class="btn">Selection</button>
+        <div class="toolGroup" role="group" aria-label="Zoom">
+          <span class="toolGroupLabel">Zoom</span>
+          <button id="zoomIn" class="btn" title="Zoom in (time axis)" aria-label="Zoom in">+</button>
+          <button id="zoomOut" class="btn" title="Zoom out (time axis)" aria-label="Zoom out">−</button>
+          <button id="zoomExtents" class="btn" title="Show the whole run">All</button>
+          <button id="selectTool" class="btn" title="Zoom to the selected time range" disabled>Selection</button>
+        </div>
         <button id="panTool" class="btn toggle">Pan</button>
         <button id="openTable" class="btn toggle">Table</button>
+        <button id="downloadPng" class="btn downloadBtn" title="Download the current view as a PNG">PNG
+          <svg class="downloadIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 20h14"/></svg>
+        </button>
       </div>
     </div>
 
     <div class="canvasWrap">
       <canvas id="plot"></canvas>
       <canvas id="overlay"></canvas>
-      <div id="hoverTime" class="hoverTime"></div>
+      <div id="hoverPoint" class="hoverPoint"></div>
     </div>
 
     <div id="stats">
@@ -121,6 +160,9 @@
           <div class="small">Selected run data</div>
         </div>
       </div>
+      <button id="downloadCsv" class="btn downloadBtn" title="Download all rows of this run as a CSV file">CSV
+        <svg class="downloadIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 20h14"/></svg>
+      </button>
     </div>
 
     <div class="drawerBody">
@@ -131,6 +173,44 @@
     </div>
   </aside>
 
+</div>
+
+<div id="exportModal" class="modal hidden">
+  <div class="modalBackdrop" id="exportBackdrop"></div>
+  <div class="modalCard exportCard" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <div class="modalHeader">
+      <div>
+        <div id="exportTitle"><b>Download PNG</b></div>
+        <div class="small">Preview of the current view</div>
+      </div>
+      <div class="modalActions">
+        <button id="exportCancel" class="btn">Cancel</button>
+        <button id="exportSave" class="btn btnPrimary">Download</button>
+      </div>
+    </div>
+    <div class="modalBody exportBody">
+      <div class="exportOptions">
+        <label class="exportOption">
+          <span class="small">Legend</span>
+          <select id="exportLegend" class="select">
+            <option value="none">None</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="right">Right</option>
+            <option value="corner">Corner</option>
+          </select>
+        </label>
+        <label class="exportOption">
+          <span class="small">Background</span>
+          <select id="exportTheme" class="select">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+      </div>
+      <div class="exportPreview" id="exportPreview"></div>
+    </div>
+  </div>
 </div>
 
 <div id="manageModal" class="modal hidden">

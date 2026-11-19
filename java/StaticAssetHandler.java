@@ -1,62 +1,55 @@
 package org.firstinspires.ftc.teamcode.logger.java;
 
-import android.content.Context;
-
 import org.firstinspires.ftc.robotcore.internal.webserver.WebHandler;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 import fi.iki.elonen.NanoHTTPD;
 
 /**
- * Serves a single file from the Android assets folder.
+ * Serves one web UI file (e.g. "index.html") from {@link WebAssets}.
  *
- * Example:
- *  assetPath = "web/index.html"
- * corresponds to:
- *  TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/web/index.html
+ * The web UI is compiled into the app as WebAssets.java (generated from logger/web/* by
+ * dev-tools/build-web-assets.py), so no Gradle or assets-folder setup is needed.
  */
 public final class StaticAssetHandler implements WebHandler {
 
-    private final Context context;
-    private final String assetPath;
+    private final String name;
     private final String contentType;
+    private byte[] bytes; // built on first request, then reused
 
-    public StaticAssetHandler(Context context, String assetPath, String contentType) {
-        this.context = context.getApplicationContext();
-        this.assetPath = assetPath;
+    public StaticAssetHandler(String name, String contentType) {
+        this.name = name;
         this.contentType = contentType;
     }
 
     @Override
     public NanoHTTPD.Response getResponse(NanoHTTPD.IHTTPSession session) {
-        try (InputStream is = context.getAssets().open(assetPath)) {
-            byte[] bytes = readAllBytes(is);
-            return NanoHTTPD.newFixedLengthResponse(
-                    NanoHTTPD.Response.Status.OK,
-                    contentType,
-                    new ByteArrayInputStream(bytes),
-                    bytes.length
-            );
-        } catch (IOException e) {
+        byte[] body = content();
+        if (body == null) {
             return NanoHTTPD.newFixedLengthResponse(
                     NanoHTTPD.Response.Status.NOT_FOUND,
                     "text/plain; charset=utf-8",
-                    "Not found: " + assetPath
+                    "Not found: web/" + name
             );
         }
+        NanoHTTPD.Response response = NanoHTTPD.newFixedLengthResponse(
+                NanoHTTPD.Response.Status.OK,
+                contentType,
+                new ByteArrayInputStream(body),
+                body.length
+        );
+        // Always fetch fresh after a new build is installed.
+        response.addHeader("Cache-Control", "no-cache");
+        return response;
     }
 
-    private static byte[] readAllBytes(InputStream is) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int r;
-        while ((r = is.read(buf)) != -1) {
-            baos.write(buf, 0, r);
+    private synchronized byte[] content() {
+        if (bytes == null) {
+            String text = WebAssets.get(name);
+            if (text != null) bytes = text.getBytes(StandardCharsets.UTF_8);
         }
-        return baos.toByteArray();
+        return bytes;
     }
 }
