@@ -8,10 +8,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,16 +29,24 @@ import fi.iki.elonen.NanoHTTPD;
  *   GET /logger/api/opmodes
  *   GET /logger/api/runs?opMode=NAME
  *   GET /logger/api/run?opMode=NAME&run=RUN
- *   GET /logger/api/data?opMode=NAME&run=RUN
+ *   GET /logger/api/data?opMode=NAME&run=RUN[&offset=BYTES]
  *   GET /logger/api/fs
  *   GET /logger/api/rename?opMode=NAME&run=RUN&suffix=SUFFIX
  *   GET /logger/api/delete?opMode=NAME&run=RUN
  *   GET /logger/api/config
  *   GET /logger/api/setconfig?class=FULL_CLASS_NAME&field=FIELD&value=VALUE
+ *   GET /logger/api/control/opmodes
+ *   GET /logger/api/control/state[?tseq=LAST_TELEMETRY_SEQ]
+ *   GET /logger/api/control/init?name=OPMODE_NAME
+ *   GET /logger/api/control/start
+ *   GET /logger/api/control/stop
  */
 public final class ApiHandler implements WebHandler {
 
-    public enum Route { OPMODES, RUNS, RUN_META, DATA, FS, RENAME, DELETE, CONFIG, SET_CONFIG }
+    public enum Route {
+        OPMODES, RUNS, RUN_META, DATA, FS, RENAME, DELETE, CONFIG, SET_CONFIG,
+        CONTROL_OPMODES, CONTROL_STATE, CONTROL_INIT, CONTROL_START, CONTROL_STOP
+    }
 
     private final Context context;
     private final Route route;
@@ -67,7 +73,8 @@ public final class ApiHandler implements WebHandler {
                 case RUN_META:
                     return okJson(runMetaJson(getFirstQuery(session, "opMode"), getFirstQuery(session, "run")));
                 case DATA:
-                    return okJson(dataJson(getFirstQuery(session, "opMode"), getFirstQuery(session, "run")));
+                    return okJson(dataJson(getFirstQuery(session, "opMode"), getFirstQuery(session, "run"),
+                            getFirstQuery(session, "offset")));
                 case FS:
                     return okJson(fsJson());
                 case RENAME:
@@ -89,6 +96,16 @@ public final class ApiHandler implements WebHandler {
                             getFirstQuery(session, "class"),
                             getFirstQuery(session, "field"),
                             getFirstQuery(session, "value")));
+                case CONTROL_OPMODES:
+                    return okJson(OpModeControl.listJson());
+                case CONTROL_STATE:
+                    return okJson(OpModeControl.stateJson(getFirstQuery(session, "tseq")));
+                case CONTROL_INIT:
+                    return okJson(OpModeControl.initJson(getFirstQuery(session, "name")));
+                case CONTROL_START:
+                    return okJson(OpModeControl.startJson());
+                case CONTROL_STOP:
+                    return okJson(OpModeControl.stopJson());
                 default:
                     return badRequest("Unknown route");
             }
@@ -270,17 +287,26 @@ public final class ApiHandler implements WebHandler {
      * Returns:
      * {
      *   "t": [ ... ],
-     *   "series": { "fieldName": [ ... ], ... }
+     *   "series": { "fieldName": [ ... ], ... },
+     *   "tUnit": "s" | "ms" | "ns",
+     *   "offset": <bytes consumed>
      * }
      *
      * Expects each log line to be JSON:
      *   {"t": <number>, "key": <number>, ...}
      *
+     * For live plotting, pass the previous response's {@code offset} back as {@code offset}
+     * to receive only the rows written since then. Only complete lines are consumed, so a
+     * row that is still being written is picked up on the next request. If the file is now
+     * shorter than {@code offset} (replaced or truncated), the whole file is returned with
+     * {@code "reset": true}.
+     *
      * @param opMode OpMode name.
      * @param run Run folder name.
+     * @param offsetParam Byte offset to resume from (empty for the whole file).
      * @return JSON payload containing time series data.
      */
-    private JSONObject dataJson(String opMode, String run) throws Exception {
+    private JSONObject dataJson(String opMode, String run, String offsetParam) throws Exception {
         requireNonEmpty(opMode, "Missing query param: opMode");
         requireNonEmpty(run, "Missing query param: run");
 
@@ -289,60 +315,98 @@ public final class ApiHandler implements WebHandler {
             throw new IllegalArgumentException("Log not found: " + log.getAbsolutePath());
         }
 
+        long offset = 0;
+        if (offsetParam != null && !offsetParam.trim().isEmpty()) {
+            try {
+                offset = Math.max(0, Long.parseLong(offsetParam.trim()));
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Invalid offset");
+            }
+        }
+
+        long length = log.length();
+        boolean reset = false;
+        if (offset > length) {
+            offset = 0;
+            reset = true;
+        }
+
+        byte[] buf = new byte[(int) (length - offset)];
+        try (RandomAccessFile raf = new RandomAccessFile(log, "r")) {
+            raf.seek(offset);
+            raf.readFully(buf);
+        }
+
         List<Double> t = new ArrayList<>();
         JSONObject series = new JSONObject();
-        String tUnit = "s";
+        String tUnit = null;
 
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(new FileInputStream(log), StandardCharsets.UTF_8))) {
+        int consumed = 0;
+        int lineStart = 0;
+        for (int i = 0; i <= buf.length; i++) {
+            boolean atEnd = i == buf.length;
+            if (!atEnd && buf[i] != '\n') continue;
 
-            String line;
-            while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-
-                JSONObject row;
+            String line = new String(buf, lineStart, i - lineStart, StandardCharsets.UTF_8).trim();
+            JSONObject row = null;
+            if (!line.isEmpty()) {
                 try {
                     row = new JSONObject(line);
-                } catch (JSONException ignored) {
-                    continue;
+                } catch (JSONException ignored) { }
+            }
+
+            if (atEnd) {
+                // Trailing text without a newline is only used if it is already a full row.
+                if (row == null) break;
+                consumed = buf.length;
+            } else {
+                consumed = i + 1;
+            }
+            lineStart = i + 1;
+            if (row == null) continue;
+
+            if (row.has("tUnit")) {
+                tUnit = row.optString("tUnit", tUnit);
+                continue;
+            }
+            if (row.has("t_unit")) {
+                tUnit = row.optString("t_unit", tUnit);
+                continue;
+            }
+            if (!row.has("t")) continue;
+            double ti = row.optDouble("t", Double.NaN);
+            if (Double.isNaN(ti)) continue;
+
+            t.add(ti);
+
+            for (java.util.Iterator<String> it = row.keys(); it.hasNext(); ) {
+                String key = it.next();
+                if ("t".equals(key)) continue;
+
+                Object v = row.opt(key);
+                if (!(v instanceof Number)) continue;
+
+                JSONArray arr = series.optJSONArray(key);
+                if (arr == null) {
+                    arr = new JSONArray();
+                    series.put(key, arr);
                 }
-
-                if (row.has("tUnit")) {
-                    tUnit = row.optString("tUnit", tUnit);
-                    continue;
-                }
-                if (row.has("t_unit")) {
-                    tUnit = row.optString("t_unit", tUnit);
-                    continue;
-                }
-                if (!row.has("t")) continue;
-                double ti = row.optDouble("t", Double.NaN);
-                if (Double.isNaN(ti)) continue;
-
-                t.add(ti);
-
-                for (java.util.Iterator<String> it = row.keys(); it.hasNext(); ) {
-                    String key = it.next();
-                    if ("t".equals(key)) continue;
-
-                    Object v = row.opt(key);
-                    if (!(v instanceof Number)) continue;
-
-                    JSONArray arr = series.optJSONArray(key);
-                    if (arr == null) {
-                        arr = new JSONArray();
-                        series.put(key, arr);
-                    }
-                    arr.put(((Number) v).doubleValue());
-                }
+                arr.put(((Number) v).doubleValue());
             }
         }
 
         JSONArray tArr = new JSONArray();
         for (double ti : t) tArr.put(ti);
 
-        return new JSONObject().put("t", tArr).put("series", series).put("tUnit", tUnit);
+        JSONObject out = new JSONObject()
+                .put("t", tArr)
+                .put("series", series)
+                .put("offset", offset + consumed);
+        // A full read always reports a unit (default seconds); a partial read only if it saw the header.
+        if (tUnit != null) out.put("tUnit", tUnit);
+        else if (offset == 0) out.put("tUnit", "s");
+        if (reset) out.put("reset", true);
+        return out;
     }
 
     // ---- helpers ----

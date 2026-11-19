@@ -54,6 +54,18 @@ public final class Server {
             manager.register("/logger/api/setconfig",
                     new ApiHandler(context, ApiHandler.Route.SET_CONFIG));
 
+            // OpMode control (Driver Station-style init / start / stop)
+            manager.register("/logger/api/control/opmodes",
+                    new ApiHandler(context, ApiHandler.Route.CONTROL_OPMODES));
+            manager.register("/logger/api/control/state",
+                    new ApiHandler(context, ApiHandler.Route.CONTROL_STATE));
+            manager.register("/logger/api/control/init",
+                    new ApiHandler(context, ApiHandler.Route.CONTROL_INIT));
+            manager.register("/logger/api/control/start",
+                    new ApiHandler(context, ApiHandler.Route.CONTROL_START));
+            manager.register("/logger/api/control/stop",
+                    new ApiHandler(context, ApiHandler.Route.CONTROL_STOP));
+
         } catch (Throwable t) {
             // Never crash RC startup
             RobotLog.ee(TAG, t, "Failed to attach /logger handlers");

@@ -9,30 +9,29 @@
 <body>
 <div id="app">
 
-  <!-- LEFT: Data selection panel -->
+  <!-- COLUMN 1: Robot control, configurables -->
   <aside class="panel leftPanel">
-    <div class="panelHeader">
-      <div class="panelActions">
-        <button id="openManager" class="btn toggle">Manage Log Files</button>
+    <!-- OpMode control (mirrors the Driver Station: select → INIT → ▶ / ■) -->
+    <div class="panelSection opCtl" data-state="unavailable" id="opCtl">
+      <div class="opCtlHeader">
+        <div class="small"><b>Robot</b></div>
+        <div class="opCtlState"><span class="opCtlDot"></span><span id="opCtlStateText">Connecting…</span></div>
       </div>
-    </div>
-
-    <div class="panelSection">
-      <div class="small">OpMode</div>
-      <select id="opModeSel" class="select"></select>
-      <div class="small"><b>Runs</b></div>
-      <select id="runSel" class="select"></select>
+      <select id="opCtlSel" class="select" disabled></select>
+      <div class="opCtlButtons">
+        <button id="opCtlInit" class="opBtn opInit" title="Initialize the selected OpMode">INIT</button>
+        <button id="opCtlStart" class="opBtn opStart" title="Start" aria-label="Start">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button id="opCtlStop" class="opBtn opStop" title="Stop (Space)" aria-label="Stop" aria-keyshortcuts="Space">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        </button>
+      </div>
+      <div id="opCtlMsg" class="small opCtlMsg"></div>
+      <div class="small opCtlKeyHint">Press <kbd>Space</kbd> to stop</div>
     </div>
 
     <div class="leftScroll">
-      <div class="panelSection series">
-        <div class="small"><b>Series</b></div>
-        <div id="seriesList"></div>
-        <div class="small hint">
-          Tip: toggle series to show/hide data.
-        </div>
-      </div>
-
       <div class="panelSection configSection">
         <div class="configHeader">
           <div class="small"><b>Configurable</b></div>
@@ -46,6 +45,32 @@
     </div>
   </aside>
 
+  <!-- COLUMN 2: Telemetry, log picker, plot series -->
+  <aside class="panel telemetryPanel">
+    <div class="panelSection telemetrySection">
+      <div class="configHeader">
+        <div class="small"><b>Telemetry</b></div>
+        <span id="telemetryMeta" class="small telemetryMeta"></span>
+      </div>
+      <div id="telemetry" class="telemetry"><div class="small">No telemetry yet. INIT an OpMode to see it here.</div></div>
+    </div>
+    <div class="panelSection logSection">
+      <div class="configHeader">
+        <div class="small"><b>Logs</b></div>
+        <button id="openManager" class="btn btnSmall toggle">Manage</button>
+      </div>
+      <div class="small">OpMode</div>
+      <select id="opModeSel" class="select"></select>
+      <div class="small">Run</div>
+      <select id="runSel" class="select"></select>
+    </div>
+
+    <div class="panelSection series">
+      <div class="small"><b>Series</b></div>
+      <div id="seriesList"></div>
+    </div>
+  </aside>
+
   <!-- MIDDLE: Plot -->
   <main class="main">
     <div class="mainHeader">
@@ -56,6 +81,7 @@
 
       <!-- Tools are on the RIGHT -->
       <div class="tools">
+        <button id="liveToggle" class="btn toggle liveBtn"><span class="liveDot"></span>Live</button>
         <button id="zoomExtents" class="btn">Extents</button>
         <button id="zoomIn" class="btn">Zoom +</button>
         <button id="zoomOut" class="btn">Zoom −</button>

@@ -171,22 +171,40 @@ function clampViewportToFull() {
   }
 }
 
-function zoomBy(factor, aboutX = null, aboutY = null) {
+function zoomBy(factor, aboutX = null, aboutY = null, xOnly = false) {
   const cx = (aboutX == null) ? (state.xMin + state.xMax) / 2 : aboutX;
   const cy = (aboutY == null) ? (state.yMin + state.yMax) / 2 : aboutY;
 
   const hx = (state.xMax - state.xMin) / 2 * factor;
-  const hy = (state.yMax - state.yMin) / 2 * factor;
-
   state.xMin = cx - hx; state.xMax = cx + hx;
-  state.yMin = cy - hy; state.yMax = cy + hy;
+
+  if (!xOnly) {
+    const hy = (state.yMax - state.yMin) / 2 * factor;
+    state.yMin = cy - hy; state.yMax = cy + hy;
+  }
 
   // Clamp zoom-out so you can’t go past “all data visible”
   clampViewportToFull();
   draw();
 }
 
+// While following a live run, the x axis starts as a fixed window and grows once data passes it.
+const LIVE_WINDOW_SECONDS = 30;
+
+function liveWindowInTimeUnits() {
+  const perSecond = { s: 1, ms: 1e3, ns: 1e9 }[state.tUnit] || 1;
+  return LIVE_WINDOW_SECONDS * perSecond;
+}
+
 function computeFullExtents() {
+  computeDataExtents();
+  if (live.following) {
+    const f = state.full;
+    f.xMax = Math.max(f.xMax, f.xMin + liveWindowInTimeUnits());
+  }
+}
+
+function computeDataExtents() {
   const t = state.data?.t || [];
   if (!t.length) {
     state.full = { xMin: 0, xMax: 1, yMin: -1, yMax: 1 };
@@ -268,7 +286,10 @@ function drawAxes(ctx, w, h) {
 
     // label (in parent coords, below plot)
     const label = formatTimeLabel(x);
-    ctx.fillText(label, px, plotH + 6);
+    // Keep the label inside the canvas (the last tick sits on the right edge).
+    const half = ctx.measureText(label).width / 2;
+    const maxCenter = w - marginL - half - 2 * dpr;
+    ctx.fillText(label, Math.min(px, maxCenter), plotH + 6);
   }
 
   // horizontal grid + y labels
@@ -715,9 +736,16 @@ function renderStats() {
   }
 
   body.innerHTML = "";
+  const seriesNames = Object.keys(state.data?.series || {});
   for (const stat of state.stats) {
     const tr = document.createElement("tr");
-    tr.appendChild(td(stat.name));
+    // Same color as the series' checkbox label and plot points.
+    const color = seriesColor(seriesNames.indexOf(stat.name));
+    tr.style.setProperty("--series-color", color);
+    tr.className = "statsRow";
+    const nameCell = td(stat.name);
+    nameCell.className = "statsName";
+    tr.appendChild(nameCell);
     tr.appendChild(td(formatRange(stat.range)));
     tr.appendChild(td(formatNumber(stat.mean)));
     tr.appendChild(td(formatNumber(stat.min)));
@@ -1007,6 +1035,17 @@ function renderRunList() {
   }
 
   sel.value = state.run || "";
+  updateLogPickerLock();
+}
+
+// Lock the log picker while an OpMode is initialized or running.
+function updateLogPickerLock() {
+  const busy = opCtl.state === "init" || opCtl.state === "running";
+  const title = busy ? "Stop the OpMode to pick a different log" : "";
+  const op = $("opModeSel");
+  const run = $("runSel");
+  if (op) { op.disabled = busy; op.title = title; }
+  if (run) { run.disabled = busy || state.runs.length === 0; run.title = title; }
 }
 
 async function loadOpModes(preserveSelection = true) {
@@ -1033,6 +1072,7 @@ async function loadOpModes(preserveSelection = true) {
 
 async function loadRuns() {
   if (!state.opMode) return;
+  if (live.following) dismissLive(); // e.g. a rename/delete in Manage Log Files
   const j = await fetchJson(`/logger/api/runs?opMode=${encodeURIComponent(state.opMode)}`);
   state.runs = j.runs || [];
 
@@ -1085,8 +1125,9 @@ function normalizeTimeUnit(unit) {
 // --- UI wiring ---
 function wireControls() {
   $("zoomExtents").onclick = () => setViewportToFull();
-  $("zoomIn").onclick = () => zoomBy(0.7);
-  $("zoomOut").onclick = () => zoomBy(1.4);
+  // Toolbar zoom changes the time axis only; the y scale stays put.
+  $("zoomIn").onclick = () => zoomBy(0.7, null, null, true);
+  $("zoomOut").onclick = () => zoomBy(1.4, null, null, true);
 
   $("selectTool").onclick = () => {
     state.tool = "select";
@@ -1105,6 +1146,7 @@ function wireControls() {
   };
 
   $("opModeSel").onchange = async () => {
+    dismissLive();
     state.opMode = $("opModeSel").value;
     state.configOpen.clear();
     renderConfig();
@@ -1117,6 +1159,7 @@ function wireControls() {
   $("runSel").onchange = async () => {
     const next = $("runSel").value;
     if (next === state.run) return;
+    dismissLive();
     state.run = next;
     await loadData();
   };
@@ -1213,12 +1256,12 @@ function installCanvasInteractions() {
         updateStats();
         draw();
       } else {
-        clearSelectionAndReset();
+        clearSelection();
       }
     } else {
       state.dragRect = null;
       if (state.tool === "select") {
-        clearSelectionAndReset();
+        clearSelection();
       } else {
         draw();
       }
@@ -1372,10 +1415,11 @@ function clearHover() {
   if (timeBox) timeBox.style.opacity = "0";
 }
 
-function clearSelectionAndReset() {
+// A click on the plot clears the selection but keeps the current zoom (use Extents to reset).
+function clearSelection() {
   state.selectionRange = null;
-  setViewportToFull();
   updateStats();
+  draw();
 }
 
 async function refreshOpModeSelection() {
@@ -1394,6 +1438,536 @@ async function refreshOpModeSelection() {
   }
 }
 
+// --- OpMode control (Driver Station-style select / INIT / ▶ / ■) ---
+const opCtl = {
+  list: [],          // [{name, flavor, group}]
+  state: "unavailable",
+  active: "",
+  lastClass: "",
+  pending: false,    // a command was sent and we're waiting for the robot to react
+  pendingTimer: null,
+  pollTimer: null,
+};
+
+const OPCTL_STATE_LABELS = {
+  unavailable: "Not connected",
+  stopped: "Stopped",
+  init: "Initialized",
+  running: "Running",
+};
+
+async function controlApi(path) {
+  const res = await fetch(cacheBust(path), { cache: "no-store" });
+  let j = null;
+  try { j = await res.json(); } catch (_) { /* non-JSON error page */ }
+  if (!res.ok || (j && j.ok === false)) {
+    throw new Error((j && j.error) || `${res.status} ${res.statusText}`);
+  }
+  return j || {};
+}
+
+function setOpCtlMessage(text, isError = false) {
+  const msg = $("opCtlMsg");
+  if (!msg) return;
+  msg.textContent = text || "";
+  msg.classList.toggle("error", !!isError);
+}
+
+async function loadControlOpModes() {
+  try {
+    const j = await controlApi("/logger/api/control/opmodes");
+    opCtl.list = j.opModes || [];
+  } catch (e) {
+    opCtl.list = [];
+  }
+  renderControlOpModes();
+}
+
+function renderControlOpModes() {
+  const sel = $("opCtlSel");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = opCtl.list.length ? "Select OpMode…" : "No OpModes";
+  sel.appendChild(placeholder);
+
+  const groups = [["autonomous", "Autonomous"], ["teleop", "TeleOp"]];
+  for (const [flavor, label] of groups) {
+    const items = opCtl.list.filter((m) => m.flavor === flavor);
+    if (!items.length) continue;
+    const og = document.createElement("optgroup");
+    og.label = label;
+    for (const m of items) {
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = m.name;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+
+  if (prev && opCtl.list.some((m) => m.name === prev)) sel.value = prev;
+  renderControlState();
+}
+
+function renderControlState() {
+  const root = $("opCtl");
+  const sel = $("opCtlSel");
+  if (!root || !sel) return;
+
+  root.dataset.state = opCtl.state;
+  $("opCtlStateText").textContent = OPCTL_STATE_LABELS[opCtl.state] || opCtl.state;
+
+  const busy = opCtl.state === "init" || opCtl.state === "running";
+  // While an OpMode is active, the selector shows it and is locked (like the DS).
+  if (busy && opCtl.active) {
+    if (![...sel.options].some((o) => o.value === opCtl.active)) {
+      const opt = document.createElement("option");
+      opt.value = opCtl.active;
+      opt.textContent = opCtl.active;
+      sel.appendChild(opt);
+    }
+    sel.value = opCtl.active;
+  }
+  sel.disabled = busy || opCtl.state === "unavailable" || opCtl.pending;
+
+  updateLogPickerLock();
+
+  $("opCtlInit").disabled = opCtl.pending || !sel.value;
+  $("opCtlStart").disabled = opCtl.pending;
+  $("opCtlStop").disabled = opCtl.pending;
+}
+
+function applyControlState(j) {
+  const prevState = opCtl.state;
+  const next = j && j.ready ? j.state : "unavailable";
+  const changed = next !== prevState;
+
+  opCtl.state = next;
+  opCtl.active = (j && j.active) || "";
+  opCtl.lastClass = (j && j.lastClass) || opCtl.lastClass;
+  if (j && j.liveRun) {
+    opCtl.liveOpMode = j.liveOpMode || "";
+    opCtl.liveRun = j.liveRun;
+  }
+
+  if (changed && opCtl.pending) {
+    opCtl.pending = false;
+    clearTimeout(opCtl.pendingTimer);
+  }
+  if (changed && next !== "unavailable") setOpCtlMessage("");
+
+  // Robot came back (or the list never loaded): fetch the OpMode list.
+  if (next !== "unavailable" && (prevState === "unavailable" || !opCtl.list.length)) {
+    loadControlOpModes();
+  }
+
+  renderControlState();
+
+  if (j && j.telemetry) {
+    opCtl.telemetrySeq = j.telemetrySeq || "";
+    renderTelemetry(j.telemetry);
+  }
+  renderTelemetryMeta();
+
+  updateLiveFollow();
+
+  // A run just finished and wasn't being followed live: show its log.
+  const dismissed = opCtl.liveRun && live.dismissedRun === liveKey(opCtl.liveOpMode, opCtl.liveRun);
+  if (changed && prevState === "running" && next === "stopped" && !live.following && !dismissed) {
+    setTimeout(showRunAfterStop, 500);
+  }
+}
+
+// Poll fast while an OpMode is active (telemetry, live plot), slowly when idle.
+function scheduleControlPoll() {
+  clearTimeout(opCtl.pollTimer);
+  pollControlState().finally(() => {
+    const active = opCtl.state === "init" || opCtl.state === "running" || opCtl.pending;
+    opCtl.pollTimer = setTimeout(scheduleControlPoll, active ? 250 : 1000);
+  });
+}
+
+async function pollControlState() {
+  if (document.hidden) return;
+  try {
+    const tseq = encodeURIComponent(opCtl.telemetrySeq || "");
+    applyControlState(await controlApi(`/logger/api/control/state?tseq=${tseq}`));
+  } catch (_) {
+    applyControlState(null);
+  }
+}
+
+async function sendControl(path, label) {
+  opCtl.pending = true;
+  setOpCtlMessage(`${label}…`);
+  renderControlState();
+
+  // If the robot never reacts, unlock the buttons again.
+  clearTimeout(opCtl.pendingTimer);
+  opCtl.pendingTimer = setTimeout(() => {
+    opCtl.pending = false;
+    setOpCtlMessage("");
+    renderControlState();
+  }, 4000);
+
+  try {
+    await controlApi(path);
+  } catch (e) {
+    clearTimeout(opCtl.pendingTimer);
+    opCtl.pending = false;
+    setOpCtlMessage(e.message, true);
+    renderControlState();
+    return;
+  }
+  // The robot applies commands on its event loop; check back quickly.
+  setTimeout(pollControlState, 150);
+  setTimeout(pollControlState, 500);
+}
+
+async function emergencyStop() {
+  // Bypasses the pending lock: a stop must always go out immediately.
+  const root = $("opCtl");
+  if (root) {
+    root.classList.remove("estop");
+    void root.offsetWidth; // restart the flash animation
+    root.classList.add("estop");
+  }
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  await sendControl("/logger/api/control/stop", "E-stop");
+}
+
+// --- Telemetry (what the Driver Station shows for the current OpMode) ---
+// HTML display format isn't stored by the SDK, so detect it from the content.
+const TELEMETRY_HTML_RE = /<\/?(b|i|u|br|font|span|big|small|h[1-6]|p|div|sub|sup|tt|strike|s|em|strong|code|pre)\b[^>]*>/i;
+const TELEMETRY_ALLOWED_TAGS = new Set(["B", "I", "U", "BR", "FONT", "SPAN", "BIG", "SMALL", "H1", "H2", "H3", "H4",
+  "H5", "H6", "P", "DIV", "SUB", "SUP", "TT", "STRIKE", "S", "EM", "STRONG", "CODE", "PRE"]);
+
+function sanitizeTelemetryHtml(html) {
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstChild;
+  const clean = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.TEXT_NODE) continue;
+      if (child.nodeType !== Node.ELEMENT_NODE || !TELEMETRY_ALLOWED_TAGS.has(child.tagName)) {
+        child.replaceWith(doc.createTextNode(child.textContent || ""));
+        continue;
+      }
+      for (const attr of [...child.attributes]) {
+        const keep = (child.tagName === "FONT" && (attr.name === "color" || attr.name === "size" || attr.name === "face")) ||
+          (attr.name === "style" && /^[\s;]*(color|background-color|font-weight|font-style|font-size)\s*:[^;:()]*;?\s*$/i.test(attr.value));
+        if (!keep) child.removeAttribute(attr.name);
+      }
+      clean(child);
+    }
+  };
+  clean(root);
+  return root.innerHTML;
+}
+
+function renderTelemetry(t) {
+  const box = $("telemetry");
+  if (!box) return;
+  const lines = t.lines || [];
+  const log = t.log || [];
+  const html = [...lines, ...log].some((l) => TELEMETRY_HTML_RE.test(l));
+
+  box.innerHTML = "";
+  if (!lines.length && !log.length) {
+    box.innerHTML = `<div class="small">The OpMode hasn't sent any telemetry yet.</div>`;
+    return;
+  }
+  const addLine = (parent, text) => {
+    const div = document.createElement("div");
+    div.className = "tLine";
+    if (html) div.innerHTML = sanitizeTelemetryHtml(text);
+    else div.textContent = text;
+    parent.appendChild(div);
+  };
+  for (const l of lines) addLine(box, l);
+  if (log.length) {
+    const logBox = document.createElement("div");
+    logBox.className = "tLog";
+    for (const l of log) addLine(logBox, l);
+    box.appendChild(logBox);
+  }
+}
+
+function renderTelemetryMeta() {
+  const box = $("telemetry");
+  const meta = $("telemetryMeta");
+  const active = opCtl.state === "init" || opCtl.state === "running";
+  if (box) box.classList.toggle("stale", !active && !!opCtl.telemetrySeq);
+  if (meta) {
+    meta.textContent = opCtl.state === "unavailable" ? "" :
+      active ? (opCtl.active || "") : (opCtl.telemetrySeq ? "Last run" : "");
+  }
+}
+
+// --- Live plot: tail the active OpMode's log while it runs ---
+const live = {
+  enabled: true,      // the "Live" toggle in the plot header
+  dismissedRun: "",   // a live run the user navigated away from (don't jump back to it)
+  following: false,
+  opMode: "",
+  run: "",
+  offset: 0,
+  timer: null,
+  busy: false,
+  lastStats: 0,
+  lastTable: 0,
+};
+
+try { live.enabled = localStorage.getItem("ftcLogger.live") !== "off"; } catch (_) { /* storage blocked */ }
+
+function liveKey(op, run) { return `${op}/${run}`; }
+
+function updateLiveFollow() {
+  const robotActive = opCtl.state === "init" || opCtl.state === "running";
+  const target = robotActive && opCtl.liveRun ? liveKey(opCtl.liveOpMode, opCtl.liveRun) : "";
+  const want = live.enabled && target && target !== live.dismissedRun;
+
+  if (want && (!live.following || liveKey(live.opMode, live.run) !== target)) {
+    startFollowing(opCtl.liveOpMode, opCtl.liveRun);
+  } else if (live.following && !want) {
+    // Robot stopped: grab the last rows. Live turned off / dismissed: just stop.
+    stopFollowing(!robotActive);
+  }
+  updateLiveUI();
+}
+
+async function startFollowing(op, run) {
+  stopFollowing(false);
+  live.following = true;
+  live.opMode = op;
+  live.run = run;
+  live.offset = 0;
+
+  // Point the log selectors at the live run.
+  try {
+    if (!state.opModes.includes(op)) await loadOpModes(true);
+    if (state.opMode !== op) {
+      state.opMode = op;
+      state.configOpen.clear();
+      renderConfig();
+    }
+    $("opModeSel").value = op;
+    const j = await fetchJson(`/logger/api/runs?opMode=${encodeURIComponent(op)}`);
+    state.runs = j.runs || [];
+  } catch (_) {
+    state.runs = [];
+  }
+  if (!live.following || live.run !== run) return; // superseded while awaiting
+  if (!state.runs.includes(run)) state.runs.unshift(run);
+  state.run = run;
+  renderRunList();
+
+  state.data = { t: [], series: {} };
+  state.tUnit = "s";
+  state.visible = new Set();
+  state.selectionRange = null;
+  buildSeriesToggles([]);
+  computeFullExtents();
+  setViewportToFull();
+  buildTable();
+  updateStats();
+  updateLiveUI();
+
+  await liveTick();
+  if (live.following && live.run === run) live.timer = setInterval(liveTick, 250);
+}
+
+async function stopFollowing(finalFetch) {
+  clearInterval(live.timer);
+  live.timer = null;
+  if (!live.following) return;
+  if (finalFetch) await liveTick(true);
+  live.following = false;
+  if (state.data) {
+    buildTable();
+    updateStats();
+    const n = Object.keys(state.data.series || {}).length;
+    setStatus(`${state.opMode} / ${state.run} (${n} series)`);
+  }
+  updateLiveUI();
+}
+
+async function liveTick(force = false) {
+  if (!live.following || (live.busy && !force)) return;
+  live.busy = true;
+  const run = live.run;
+  try {
+    const j = await fetchJson(
+      `/logger/api/data?opMode=${encodeURIComponent(live.opMode)}&run=${encodeURIComponent(run)}&offset=${live.offset}`);
+    if (!live.following || live.run !== run) return;
+    appendLiveData(j);
+  } catch (_) {
+    // File may not exist yet (OpMode hasn't created its LogWriter); try again next tick.
+  } finally {
+    live.busy = false;
+  }
+}
+
+function appendLiveData(j) {
+  if (j.reset) state.data = { t: [], series: {} };
+  live.offset = typeof j.offset === "number" ? j.offset : live.offset;
+  if (j.tUnit) state.tUnit = normalizeTimeUnit(j.tUnit);
+
+  const t = j.t || [];
+  const series = j.series || {};
+  const data = state.data;
+
+  let newSeries = false;
+  for (const [name, vals] of Object.entries(series)) {
+    if (!data.series[name]) {
+      data.series[name] = [];
+      state.visible.add(name);
+      newSeries = true;
+    }
+    for (const v of vals) data.series[name].push(v);
+  }
+  for (const v of t) data.t.push(v);
+  if (newSeries) buildSeriesToggles(Object.keys(data.series));
+
+  // Keep auto-scaling unless the user has zoomed or panned away from the full view.
+  const atFull = state.xMin === state.full.xMin && state.xMax === state.full.xMax &&
+                 state.yMin === state.full.yMin && state.yMax === state.full.yMax;
+  if (t.length || j.reset) {
+    computeFullExtents();
+    if (atFull) setViewportToFull(); else draw();
+  }
+
+  const now = performance.now();
+  if (now - live.lastStats > 500) { live.lastStats = now; updateStats(); }
+  const drawer = $("tableDrawer");
+  if (drawer && drawer.classList.contains("open") && now - live.lastTable > 1000) {
+    live.lastTable = now;
+    buildTable();
+  }
+  setStatus(`${state.opMode} / ${state.run} · ${data.t.length} rows`);
+}
+
+// User picked a different log while a run is live: stop following that run.
+function dismissLive() {
+  if (!live.following) return;
+  live.dismissedRun = liveKey(live.opMode, live.run);
+  stopFollowing(false);
+}
+
+function updateLiveUI() {
+  const btn = $("liveToggle");
+  if (btn) {
+    btn.classList.toggle("active", live.enabled);
+    btn.classList.toggle("streaming", live.following);
+    btn.title = live.following ? "Following the running OpMode's log (click to stop following)"
+      : live.enabled ? "Live plot is on: the running OpMode's log will be followed"
+      : "Live plot is off";
+  }
+}
+
+function wireLiveToggle() {
+  const btn = $("liveToggle");
+  if (!btn) return;
+  btn.onclick = () => {
+    if (live.following) {
+      live.enabled = false;
+    } else {
+      live.enabled = !live.enabled;
+      if (live.enabled) live.dismissedRun = "";
+    }
+    try { localStorage.setItem("ftcLogger.live", live.enabled ? "on" : "off"); } catch (_) { /* ignore */ }
+    updateLiveFollow();
+  };
+  updateLiveUI();
+}
+
+async function showRunAfterStop() {
+  if (opCtl.liveRun) {
+    try {
+      await loadOpModes(true);
+      if (state.opModes.includes(opCtl.liveOpMode)) {
+        if (state.opMode !== opCtl.liveOpMode) {
+          state.opMode = opCtl.liveOpMode;
+          state.configOpen.clear();
+          renderConfig();
+        }
+        $("opModeSel").value = state.opMode;
+        const j = await fetchJson(`/logger/api/runs?opMode=${encodeURIComponent(state.opMode)}`);
+        state.runs = j.runs || [];
+        if (state.runs.includes(opCtl.liveRun)) {
+          state.run = opCtl.liveRun;
+          renderRunList();
+          await loadData();
+          return;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  await showLatestRunFor(opCtl.lastClass);
+}
+
+async function showLatestRunFor(className) {
+  try {
+    await loadOpModes(true);
+    const folder = sanitizeName(className);
+    if (folder && state.opModes.includes(folder)) {
+      if (state.opMode !== folder) {
+        state.opMode = folder;
+        $("opModeSel").value = folder;
+        state.configOpen.clear();
+        renderConfig();
+      }
+      await loadRuns(); // picks the newest run
+    } else {
+      await refreshOpModeSelection();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function wireOpModeControl() {
+  const sel = $("opCtlSel");
+  if (!sel) return;
+  sel.onchange = () => { setOpCtlMessage(""); renderControlState(); };
+
+  $("opCtlInit").onclick = () => {
+    if (!sel.value) return;
+    sendControl(`/logger/api/control/init?name=${encodeURIComponent(sel.value)}`, "Initializing");
+  };
+  $("opCtlStart").onclick = () => sendControl("/logger/api/control/start", "Starting");
+  $("opCtlStop").onclick = () => sendControl("/logger/api/control/stop", "Stopping");
+
+  // Space bar = emergency stop while an OpMode is initialized or running.
+  // Listens in the capture phase so it works no matter what has focus, and swallows
+  // the key so it can't also "click" a focused button (e.g. ▶ right after starting).
+  let spaceHandled = false;
+  window.addEventListener("keydown", (ev) => {
+    if (ev.code !== "Space" && ev.key !== " ") return;
+    const active = opCtl.state === "init" || opCtl.state === "running" || opCtl.pending;
+    if (!active) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    spaceHandled = true;
+    if (ev.repeat) return;
+    emergencyStop();
+  }, true);
+  window.addEventListener("keyup", (ev) => {
+    if (!spaceHandled || (ev.code !== "Space" && ev.key !== " ")) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    spaceHandled = false;
+  }, true);
+
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollControlState(); });
+  scheduleControlPoll();
+}
+
 // --- boot ---
 window.addEventListener("resize", () => { resizeCanvases(); draw(); });
 
@@ -1401,6 +1975,8 @@ window.addEventListener("resize", () => { resizeCanvases(); draw(); });
   try {
     bindDrawerButtons();
     wireControls();
+    wireOpModeControl();
+    wireLiveToggle();
     installCanvasInteractions();
     const modal = $("manageModal");
     if (modal) modal.classList.add("hidden");
