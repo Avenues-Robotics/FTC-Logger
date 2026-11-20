@@ -25,7 +25,7 @@ Graph from the same object you already use for telemetry:
 2) Each loop, add values to the graph: `telemetry.addGraph("test encoder", pos, "test power", testPower);`
 3) Call `telemetry.update()` as usual. It sends telemetry to the Driver Station **and** writes one graph row. Time (in seconds) is added for you.
 
-`LoggerTelemetry` is regular telemetry plus `addGraph`. `addData`, `addLine`, `log()` and every other telemetry call are unaffected.
+`LoggerTelemetry` is regular telemetry plus `addGraph`. Regular telemetry calls like `addData`, `addLine`, `log()`, etc. are unaffected.
 
 ### Example OpMode
 This assumes you have a motor and encoder plugged into your Robot Controller and named `testMotor` in your configuration. It's the same as `demoOpModes/LoggerDemoOneMotor.java`.
