@@ -1,0 +1,44 @@
+# Builds logger.zip (everything unpacks into a folder named "logger", ready to drop into
+# TeamCode/src/main/java/org/firstinspires/ftc/teamcode/) and publishes it on every push
+# to main. Permanent download link:
+#   https://github.com/Avenues-Robotics/ftc-logger/releases/latest/download/logger.zip
+name: Publish logger.zip
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-zip
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check WebAssets.java is up to date
+        run: python3 dev-tools/build-web-assets.py --check
+
+      - name: Build logger.zip
+        run: git archive --format=zip --prefix=logger/ -o logger.zip HEAD
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: logger-latest
+        run: |
+          git tag -f "$TAG"
+          git push -f origin "refs/tags/$TAG"
+          NOTES="Download **logger.zip**, unzip it, and drag the \`logger\` folder into \`TeamCode/src/main/java/org/firstinspires/ftc/teamcode/\`. Built from ${GITHUB_SHA::7}."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" logger.zip --clobber
+            gh release edit "$TAG" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" logger.zip --title "FTC Logger" --notes "$NOTES" --latest
+          fi

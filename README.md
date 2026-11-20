@@ -13,8 +13,9 @@ FTC Logger allows you to write logs from within an OpMode to JSONL files on the 
 - Lets you INIT / start / stop OpModes from the browser, with live telemetry and a live plot of the running OpMode's log
 
 ## How to add to your Robot Controller
-1) Download and extract the ZIP file of this repository.
-2) Add the full `logger` folder to your teamcode folder (dev-tools and demoOpModes are optional and can be deleted). That's all: no Gradle or other setup is needed.
+1) **[Download logger.zip](https://github.com/Avenues-Robotics/ftc-logger/releases/latest/download/logger.zip)** and unzip it. You'll get a folder named `logger`.
+   (Don't use GitHub's green "Code → Download ZIP" button: that folder is named `ftc-logger-main` and won't compile until you rename it.)
+2) Drag the `logger` folder into `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/` (in Android Studio, that's the `teamcode` package). `dev-tools` and `demoOpModes` are optional and can be deleted. That's all: no Gradle or other setup is needed.
 3) Follow the instructions below to use it in an OpMode
 
 ## How to use in an OpMode
