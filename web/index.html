@@ -19,7 +19,7 @@
 </head>
 <body>
 <header class="appHeader">
-  <div class="appTitle">FTC Logger</div>
+  <div class="appTitle"><img class="appLogo" src="logo.png" alt="" width="62" height="49" />FTC Logger</div>
   <div class="robotStatus">
     <div class="statusItem connStatus" id="hdrConn" data-state="connecting">
       <span class="statusDot"></span><span id="hdrConnText">Connecting…</span>
@@ -99,7 +99,12 @@
     </div>
 
     <div class="panelSection series">
-      <div class="small"><b>Show on Graph</b></div>
+      <div class="small"><b>Graph Options</b></div>
+      <div class="segToggle" role="group" aria-label="Plot style">
+        <button id="styleLines" class="btn btnSmall toggle" type="button">Lines</button>
+        <button id="stylePoints" class="btn btnSmall toggle" type="button">Points</button>
+      </div>
+      <div class="small seriesTitle"><b>Series</b></div>
       <div id="seriesList"></div>
     </div>
   </aside>

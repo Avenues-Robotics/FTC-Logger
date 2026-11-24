@@ -12,6 +12,7 @@ when WebAssets.java is out of date):
     python3 dev-tools/build-web-assets.py --check  # exit 1 if out of date (for CI / pre-commit)
 """
 import argparse
+import base64
 import hashlib
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ PACKAGE = "org.firstinspires.ftc.teamcode.logger.java"
 
 # Served files, in a fixed order (the order also defines the hash).
 FILES = ["index.html", "style.css", "app.js"]
+# Binary files (images), stored base64-encoded.
+BINARY_FILES = ["logo.png"]
 
 # Java limits each string constant to 65535 bytes (modified UTF-8). Stay well under it.
 MAX_CHUNK_BYTES = 30000
@@ -31,7 +34,7 @@ MAX_CHUNK_BYTES = 30000
 def source_hash():
     """Hash of the web files' contents; stored in WebAssets.java to detect stale builds."""
     h = hashlib.sha256()
-    for name in FILES:
+    for name in FILES + BINARY_FILES:
         h.update(name.encode("utf-8") + b"\0")
         h.update((WEB_DIR / name).read_bytes())
         h.update(b"\0")
@@ -117,6 +120,19 @@ def render():
         "        }",
         "    }",
         "",
+        "    /** Bytes of web/<name>: text files as UTF-8, images decoded. Null if there is no such file. */",
+        "    static byte[] bytes(String name) {",
+        "        switch (name) {",
+    ]
+    for i, name in enumerate(BINARY_FILES):
+        lines.append(f'            case "{name}": return android.util.Base64.decode(join(BIN_{i}), android.util.Base64.DEFAULT);')
+    lines += [
+        "            default:",
+        "                String text = get(name);",
+        "                return text == null ? null : text.getBytes(java.nio.charset.StandardCharsets.UTF_8);",
+        "        }",
+        "    }",
+        "",
         "    // Each file is split into several constants (Java caps a single one at 64 KB) and",
         "    // joined at runtime. An array keeps javac from folding them back into one constant.",
         "    private static String join(String[] parts) {",
@@ -128,6 +144,12 @@ def render():
     for i, name in enumerate(FILES):
         text = (WEB_DIR / name).read_text(encoding="utf-8")
         lines += ["", f"    // web/{name}", f"    private static final String[] FILE_{i} = {{"]
+        for c in chunks(text):
+            lines.append(f'        "{c}",')
+        lines.append("    };")
+    for i, name in enumerate(BINARY_FILES):
+        text = base64.b64encode((WEB_DIR / name).read_bytes()).decode("ascii")
+        lines += ["", f"    // web/{name} (base64)", f"    private static final String[] BIN_{i} = {{"]
         for c in chunks(text):
             lines.append(f'        "{c}",')
         lines.append("    };")
@@ -149,7 +171,7 @@ def main():
 
     OUT_FILE.write_text(render(), encoding="utf-8", newline="\n")
     kb = OUT_FILE.stat().st_size / 1024
-    print(f"Wrote {OUT_FILE.relative_to(LOGGER_DIR)} ({kb:.0f} KB) from web/{{{','.join(FILES)}}}")
+    print(f"Wrote {OUT_FILE.relative_to(LOGGER_DIR)} ({kb:.0f} KB) from web/{{{','.join(FILES + BINARY_FILES)}}}")
     return 0
 
 

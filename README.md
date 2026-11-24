@@ -156,7 +156,7 @@ The `dev-tools` folder contains a lightweight local server, a fake robot, and a 
 - `0001.jsonl`: sample log file used by the dev server
 
 ### Editing the web UI
-The robot serves the web UI from `java/WebAssets.java`, a generated file that contains `web/index.html`, `web/style.css` and `web/app.js`. That's what lets teams install the logger by copying one folder, with no Gradle changes. Don't edit `WebAssets.java` by hand: edit the files in `web/`, then regenerate it before building for the robot or committing:
+The robot serves the web UI from `java/WebAssets.java`, a generated file that contains `web/index.html`, `web/style.css`, `web/app.js` and `web/logo.png`. That's what lets teams install the logger by copying one folder, with no Gradle changes. Don't edit `WebAssets.java` by hand: edit the files in `web/`, then regenerate it before building for the robot or committing:
 
 ```bash
 python3 TeamCode/src/main/java/org/firstinspires/ftc/teamcode/logger/dev-tools/build-web-assets.py

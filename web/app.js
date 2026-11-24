@@ -33,6 +33,7 @@ const state = {
   selectionRange: null, // [xMin, xMax] in tUnit
   activeRow: null,      // sample index of the point last clicked on the plot (highlighted in the table)
   regressionEnabled: false,
+  plotStyle: "points", // 'points' or 'lines'
   stats: [],
   tUnit: "s",
 
@@ -202,9 +203,12 @@ function computeFullExtents() {
   if (!(xMax > xMin)) xMax = xMin + 1; // a single sample still needs a non-zero span
   let yMin = Infinity, yMax = -Infinity;
 
-  for (const [name, arr] of Object.entries(state.data.series || {})) {
-    // full extents should consider ALL series, not just visible
-    for (const v of arr || []) {
+  // Y extents follow the visible series (all series when none are checked).
+  const all = state.data.series || {};
+  let names = Object.keys(all).filter((n) => state.visible.has(n));
+  if (!names.length) names = Object.keys(all);
+  for (const name of names) {
+    for (const v of all[name] || []) {
       if (typeof v !== "number" || !isFinite(v)) continue;
       yMin = Math.min(yMin, v);
       yMax = Math.max(yMax, v);
@@ -215,6 +219,44 @@ function computeFullExtents() {
 
   const yPad = (yMax - yMin) * 0.08 || 1;
   state.full = { xMin, xMax, yMin: yMin - yPad, yMax: yMax + yPad };
+}
+
+function isAtFullView() {
+  return state.xMin === state.full.xMin && state.xMax === state.full.xMax &&
+         state.yMin === state.full.yMin && state.yMax === state.full.yMax;
+}
+
+// Series were shown/hidden: rescale Y to the visible series. At the full view, go to the
+// new full view; when zoomed in on X, keep the X range and fit Y to the data inside it.
+function rescaleYForVisibleSeries() {
+  const wasAtFull = isAtFullView();
+  computeFullExtents();
+  if (wasAtFull) { setViewportToFull(); return; }
+
+  const t = state.data?.t || [];
+  const series = state.data?.series || {};
+  let yMin = Infinity, yMax = -Infinity;
+  for (const name of Object.keys(series)) {
+    if (!state.visible.has(name)) continue;
+    const arr = series[name] || [];
+    for (let i = 0; i < t.length; i++) {
+      if (t[i] < state.xMin || t[i] > state.xMax) continue;
+      const v = arr[i];
+      if (typeof v !== "number" || !isFinite(v)) continue;
+      yMin = Math.min(yMin, v);
+      yMax = Math.max(yMax, v);
+    }
+  }
+  if (isFinite(yMin) && isFinite(yMax)) {
+    const pad = (yMax - yMin) * 0.08 || 1;
+    state.yMin = yMin - pad;
+    state.yMax = yMax + pad;
+  } else {
+    state.yMin = state.full.yMin;
+    state.yMax = state.full.yMax;
+  }
+  clampViewportToFull();
+  draw();
 }
 
 function setViewportToFull() {
@@ -413,18 +455,39 @@ function renderPlot(ctx, w, h, th) {
     const arr = state.data.series[name];
     if (!arr || !arr.length) continue;
 
-    ctx.fillStyle = th.series(idx);
-    const r = 4.0;
-    for (let i = 0; i < Math.min(t.length, arr.length); i++) {
-      const x = t[i], y = arr[i];
-      if (!isFinite(x) || !isFinite(y)) continue;
-      if (x < state.xMin || x > state.xMax) continue;
+    const n = Math.min(t.length, arr.length);
+    const toPx = (x) => (x - state.xMin) / (state.xMax - state.xMin) * plotW;
+    const toPy = (y) => plotH - (y - state.yMin) / (state.yMax - state.yMin) * plotH;
 
-      const px = (x - state.xMin) / (state.xMax - state.xMin) * plotW;
-      const py = plotH - (y - state.yMin) / (state.yMax - state.yMin) * plotH;
+    if (state.plotStyle === "lines") {
+      // Connect consecutive samples; a missing value breaks the line. Points just outside
+      // the view are included so lines run to the plot edges (the clip trims them).
+      ctx.strokeStyle = th.series(idx);
+      ctx.lineWidth = 2.0;
+      ctx.lineJoin = "round";
       ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
+      let penDown = false;
+      for (let i = 0; i < n; i++) {
+        const x = t[i], y = arr[i];
+        if (!isFinite(x) || !isFinite(y)) { penDown = false; continue; }
+        const prevIn = i > 0 && t[i - 1] >= state.xMin;
+        const nextIn = i + 1 < n && t[i + 1] <= state.xMax;
+        if ((x < state.xMin && !nextIn) || (x > state.xMax && !prevIn)) { penDown = false; continue; }
+        if (penDown) ctx.lineTo(toPx(x), toPy(y));
+        else { ctx.moveTo(toPx(x), toPy(y)); penDown = true; }
+      }
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = th.series(idx);
+      const r = 4.0;
+      for (let i = 0; i < n; i++) {
+        const x = t[i], y = arr[i];
+        if (!isFinite(x) || !isFinite(y)) continue;
+        if (x < state.xMin || x > state.xMax) continue;
+        ctx.beginPath();
+        ctx.arc(toPx(x), toPy(y), r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 
@@ -1006,6 +1069,94 @@ function timeUnitLabel() {
 }
 
 // --- Data selection UI ---
+// Series the user unchecked, remembered per OpMode so new runs of the same OpMode keep the
+// same selection. Hidden (not visible) names are stored so series never seen before still show.
+const HIDDEN_SERIES_KEY = "ftcLogger.hiddenSeries";
+
+function loadHiddenSeriesAll() {
+  try {
+    const all = JSON.parse(localStorage.getItem(HIDDEN_SERIES_KEY) || "{}");
+    return all && typeof all === "object" ? all : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function hiddenSeriesFor(opMode) {
+  const list = loadHiddenSeriesAll()[opMode];
+  return new Set(Array.isArray(list) ? list : []);
+}
+
+function isSeriesHidden(name) {
+  return hiddenSeriesFor(state.opMode).has(name);
+}
+
+function setSeriesHidden(name, hidden) {
+  if (!state.opMode) return;
+  const all = loadHiddenSeriesAll();
+  const set = new Set(Array.isArray(all[state.opMode]) ? all[state.opMode] : []);
+  if (hidden) set.add(name); else set.delete(name);
+  if (set.size) all[state.opMode] = [...set]; else delete all[state.opMode];
+  try { localStorage.setItem(HIDDEN_SERIES_KEY, JSON.stringify(all)); } catch (_) { /* optional */ }
+}
+
+// Series names each OpMode logged last time, so INIT can show the series list (and keep the
+// checkbox choices) before the new run has written any rows.
+const KNOWN_SERIES_KEY = "ftcLogger.knownSeries";
+
+function loadKnownSeriesAll() {
+  try {
+    const all = JSON.parse(localStorage.getItem(KNOWN_SERIES_KEY) || "{}");
+    return all && typeof all === "object" ? all : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function knownSeriesFor(opMode) {
+  const list = loadKnownSeriesAll()[opMode];
+  return Array.isArray(list) ? list : [];
+}
+
+function setKnownSeries(opMode, names) {
+  if (!opMode || !names.length) return;
+  const all = loadKnownSeriesAll();
+  all[opMode] = names;
+  try { localStorage.setItem(KNOWN_SERIES_KEY, JSON.stringify(all)); } catch (_) { /* optional */ }
+}
+
+// Names of series that have at least one value (seeded placeholders are empty).
+function seriesWithData(data) {
+  return Object.keys(data?.series || {}).filter((n) => (data.series[n] || []).length > 0);
+}
+
+// Known series are stored under the log folder and, for live runs, under the OpMode's
+// Driver Station name too (several OpModes can share a log folder, e.g. on the fake robot).
+function opModeKey(name) { return name ? `opmode:${name}` : ""; }
+
+// Series to show while a new run starts: the ones this OpMode logged last time, from this
+// browser's memory, or else read from the folder's previous log on the robot. Any that the
+// new run doesn't log are dropped when its first rows arrive.
+async function seriesForNewRun(opMode, run, activeName) {
+  const byName = activeName ? knownSeriesFor(opModeKey(activeName)) : [];
+  if (byName.length) return byName;
+  // The folder's last live run was a different OpMode: its series aren't this one's.
+  const source = knownSeriesFor(`source:${opMode}`)[0];
+  if (activeName && source && source !== activeName) return [];
+  const known = knownSeriesFor(opMode);
+  if (known.length) return known;
+  const prev = (state.runs || []).find((r) => r !== run);
+  if (!prev) return [];
+  try {
+    const j = await fetchJson(`/logger/api/data?opMode=${encodeURIComponent(opMode)}&run=${encodeURIComponent(prev)}`);
+    const names = seriesWithData(j);
+    setKnownSeries(opMode, names);
+    return names;
+  } catch (_) {
+    return [];
+  }
+}
+
 function buildSeriesToggles(names) {
   const list = $("seriesList");
   list.innerHTML = "";
@@ -1021,8 +1172,9 @@ function buildSeriesToggles(names) {
     cb.onchange = () => {
       if (cb.checked) state.visible.add(name);
       else state.visible.delete(name);
+      setSeriesHidden(name, !cb.checked);
       updateStats();
-      draw();
+      rescaleYForVisibleSeries();
     };
 
     const span = document.createElement("span");
@@ -1304,7 +1456,9 @@ async function loadData() {
   state.tUnit = normalizeTimeUnit(j.tUnit);
 
   const seriesNames = Object.keys(j.series || {});
-  state.visible = new Set(seriesNames);
+  const hidden = hiddenSeriesFor(state.opMode);
+  state.visible = new Set(seriesNames.filter((n) => !hidden.has(n)));
+  if (state.run === state.runs[0]) setKnownSeries(state.opMode, seriesWithData(j));
   state.selectionRange = null;
   state.activeRow = null;
 
@@ -1346,6 +1500,23 @@ function wireControls() {
     state.tool = (state.tool === "pan") ? "select" : "pan";
     updateToggleUI();
   };
+  const PLOT_STYLE_KEY = "ftcLogger.plotStyle";
+  try {
+    if (localStorage.getItem(PLOT_STYLE_KEY) === "lines") state.plotStyle = "lines";
+  } catch (_) { /* storage blocked */ }
+  const setPlotStyle = (style) => {
+    state.plotStyle = style;
+    try { localStorage.setItem(PLOT_STYLE_KEY, style); } catch (_) { /* optional */ }
+    $("styleLines").classList.toggle("active", style === "lines");
+    $("stylePoints").classList.toggle("active", style === "points");
+    $("styleLines").setAttribute("aria-pressed", String(style === "lines"));
+    $("stylePoints").setAttribute("aria-pressed", String(style === "points"));
+    draw();
+  };
+  $("styleLines").onclick = () => setPlotStyle("lines");
+  $("stylePoints").onclick = () => setPlotStyle("points");
+  setPlotStyle(state.plotStyle);
+
   $("toggleReg").onclick = () => {
     state.regressionEnabled = !state.regressionEnabled;
     $("toggleReg").textContent = state.regressionEnabled ? "Hide regression" : "Add regression";
@@ -1828,10 +1999,19 @@ function renderExportCanvas({ legend, theme }) {
   if (!showLegend || !axes) return out;
 
   const drawItem = (it, x, yMid) => {
-    ctx.fillStyle = it.color;
-    ctx.beginPath();
-    ctx.arc(x + sw / 2, yMid, sw / 2, 0, Math.PI * 2);
-    ctx.fill();
+    if (state.plotStyle === "lines") {
+      ctx.strokeStyle = it.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, yMid);
+      ctx.lineTo(x + sw, yMid);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = it.color;
+      ctx.beginPath();
+      ctx.arc(x + sw / 2, yMid, sw / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.fillStyle = th.text;
     ctx.fillText(it.name, x + sw + swGap, yMid);
   };
@@ -2072,9 +2252,12 @@ function applyControlState(j) {
   opCtl.state = next;
   opCtl.active = (j && j.active) || "";
   opCtl.lastClass = (j && j.lastClass) || opCtl.lastClass;
-  if (j && j.liveRun) {
-    opCtl.liveOpMode = j.liveOpMode || "";
-    opCtl.liveRun = j.liveRun;
+  // The robot reports the run file written since the latest INIT. LoggerTelemetry creates it on
+  // the first graph row (usually after START), so right after INIT there may be none yet: don't
+  // keep showing the previous OpMode's run as live.
+  if (j && j.ready) {
+    opCtl.liveOpMode = j.liveRun ? (j.liveOpMode || "") : "";
+    opCtl.liveRun = j.liveRun || "";
   }
 
   if (changed && opCtl.pending) {
@@ -2113,9 +2296,14 @@ function applyControlState(j) {
 
   updateLiveFollow();
 
+  // INIT before the OpMode has logged anything: show its (empty) graph with last run's series.
+  if (changed && next === "init" && !opCtl.liveRun && live.enabled) showPendingRun(opCtl.lastClass);
+
   // A run just finished and wasn't being followed live: show its log.
   const dismissed = opCtl.liveRun && live.dismissedRun === liveKey(opCtl.liveOpMode, opCtl.liveRun);
-  if (changed && prevState === "running" && next === "stopped" && !live.following && !dismissed) {
+  const wasActive = prevState === "running" || prevState === "init";
+  if (changed && wasActive && next === "stopped" && (!live.following || pendingInit.shown) && !dismissed) {
+    pendingInit.shown = false;
     setTimeout(showRunAfterStop, 500);
   }
 }
@@ -2309,6 +2497,8 @@ const live = {
   busy: false,
   lastStats: 0,
   lastTable: 0,
+  knownKey: "",       // series names last saved as this OpMode's known series
+  activeName: "",     // Driver Station name of the OpMode being followed
 };
 
 try { live.enabled = localStorage.getItem("ftcLogger.live") !== "off"; } catch (_) { /* storage blocked */ }
@@ -2330,6 +2520,7 @@ function updateLiveFollow() {
 }
 
 async function startFollowing(op, run) {
+  pendingInit.shown = false;
   stopFollowing(false);
   live.following = true;
   live.opMode = op;
@@ -2355,12 +2546,21 @@ async function startFollowing(op, run) {
   state.run = run;
   renderRunList();
 
+  live.activeName = opCtl.active;
+  const seeded = await seriesForNewRun(op, run, live.activeName);
+  if (!live.following || live.run !== run) return; // superseded while awaiting
+
   state.data = { t: [], series: {} };
   state.tUnit = "s";
   state.visible = new Set();
+  for (const name of seeded) {
+    state.data.series[name] = [];
+    if (!isSeriesHidden(name)) state.visible.add(name);
+  }
+  live.knownKey = seeded.join("\n");
   state.selectionRange = null;
   state.activeRow = null;
-  buildSeriesToggles([]);
+  buildSeriesToggles(seeded);
   computeFullExtents();
   setViewportToFull();
   buildTable();
@@ -2378,6 +2578,12 @@ async function stopFollowing(finalFetch) {
   if (finalFetch) await liveTick(true);
   live.following = false;
   if (state.data) {
+    const series = state.data.series || {};
+    const unused = Object.keys(series).filter((n) => !(series[n] || []).length);
+    if (unused.length && state.data.t.length) {
+      for (const n of unused) { delete series[n]; state.visible.delete(n); }
+      buildSeriesToggles(Object.keys(series));
+    }
     buildTable();
     updateStats();
     const n = Object.keys(state.data.series || {}).length;
@@ -2411,11 +2617,22 @@ function appendLiveData(j) {
   const series = j.series || {};
   const data = state.data;
 
+  // First rows of the run: drop series remembered from last time that this run doesn't log.
+  // (A series that starts later is added back when its first value arrives.)
   let newSeries = false;
+  if (t.length && !data.t.length) {
+    for (const name of Object.keys(data.series)) {
+      if (!data.series[name].length && !(name in series)) {
+        delete data.series[name];
+        state.visible.delete(name);
+        newSeries = true;
+      }
+    }
+  }
   for (const [name, vals] of Object.entries(series)) {
     if (!data.series[name]) {
       data.series[name] = [];
-      state.visible.add(name);
+      if (!isSeriesHidden(name)) state.visible.add(name);
       newSeries = true;
     }
     for (const v of vals) data.series[name].push(v);
@@ -2423,9 +2640,17 @@ function appendLiveData(j) {
   for (const v of t) data.t.push(v);
   if (newSeries) buildSeriesToggles(Object.keys(data.series));
 
+  const withData = seriesWithData(data);
+  const key = withData.join("\n");
+  if (withData.length && key !== live.knownKey) {
+    live.knownKey = key;
+    setKnownSeries(live.opMode, withData);
+    setKnownSeries(opModeKey(live.activeName), withData);
+    if (live.activeName) setKnownSeries(`source:${live.opMode}`, [live.activeName]);
+  }
+
   // Keep auto-scaling unless the user has zoomed or panned away from the full view.
-  const atFull = state.xMin === state.full.xMin && state.xMax === state.full.xMax &&
-                 state.yMin === state.full.yMin && state.yMax === state.full.yMax;
+  const atFull = isAtFullView();
   if (t.length || j.reset) {
     computeFullExtents();
     if (atFull) setViewportToFull(); else draw();
@@ -2473,6 +2698,52 @@ function wireLiveToggle() {
     updateLiveFollow();
   };
   updateLiveUI();
+}
+
+// The INIT'd OpMode's graph, shown before its log file exists (see showPendingRun).
+const pendingInit = { shown: false };
+
+// Clear the graph for an OpMode that was just INIT'd, listing the series it logged last time.
+// Live following takes over as soon as the OpMode writes its first graph row.
+async function showPendingRun(className) {
+  const folder = sanitizeName(className);
+  if (!folder) return;
+  const stillPending = () => opCtl.state === "init" && !opCtl.liveRun && !live.following;
+
+  if (state.opMode !== folder) {
+    state.opMode = folder;
+    state.configOpen.clear();
+    renderConfig();
+  }
+  if ([...$("opModeSel").options].some((o) => o.value === folder)) $("opModeSel").value = folder;
+  try {
+    const j = await fetchJson(`/logger/api/runs?opMode=${encodeURIComponent(folder)}`);
+    state.runs = j.runs || [];
+  } catch (_) {
+    state.runs = [];
+  }
+  if (!stillPending()) return;
+  const names = await seriesForNewRun(folder, "", opCtl.active);
+  if (!stillPending()) return;
+
+  pendingInit.shown = true;
+  state.run = "";
+  renderRunList();
+  state.data = { t: [], series: {} };
+  state.tUnit = "s";
+  state.visible = new Set();
+  for (const name of names) {
+    state.data.series[name] = [];
+    if (!isSeriesHidden(name)) state.visible.add(name);
+  }
+  state.selectionRange = null;
+  state.activeRow = null;
+  buildSeriesToggles(names);
+  computeFullExtents();
+  setViewportToFull();
+  buildTable();
+  updateStats();
+  setStatus(`${folder} · waiting for the first graph row`);
 }
 
 async function showRunAfterStop() {

@@ -67,7 +67,7 @@ body {
 
 #app {
   display: grid;
-  grid-template-columns: 240px 260px 1fr auto; /* controls | telemetry+series | main | right drawer */
+  grid-template-columns: 240px 340px 1fr auto; /* controls | telemetry+series | main | right drawer */
   flex: 1;
   min-height: 0;
 }
@@ -93,6 +93,9 @@ body {
 }
 
 .series { border-bottom: 0; }
+.segToggle { display: flex; gap: 6px; margin: 10px 0 14px; }
+.segToggle .btn { padding: 5px 12px; }
+.seriesTitle { margin-bottom: 4px; }
 .configSection { border-bottom: 0; }
 
 .hint { margin-top: 10px; }
@@ -669,7 +672,8 @@ input.cfgInput[type=checkbox] { width: auto; justify-self: start; }
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.appTitle { font-size: 20px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.appTitle { display: flex; align-items: center; gap: 10px; font-size: 28px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.appLogo { height: 34px; width: auto; display: block; }
 .robotStatus { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .statusItem {
   display: flex;

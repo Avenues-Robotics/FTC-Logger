@@ -3,12 +3,11 @@ package org.firstinspires.ftc.teamcode.logger.java;
 import org.firstinspires.ftc.robotcore.internal.webserver.WebHandler;
 
 import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 
 import fi.iki.elonen.NanoHTTPD;
 
 /**
- * Serves one web UI file (e.g. "index.html") from {@link WebAssets}.
+ * Serves one web UI file (e.g. "index.html" or "logo.png") from {@link WebAssets}.
  *
  * The web UI is compiled into the app as WebAssets.java (generated from logger/web/* by
  * dev-tools/build-web-assets.py), so no Gradle or assets-folder setup is needed.
@@ -47,8 +46,7 @@ public final class StaticAssetHandler implements WebHandler {
 
     private synchronized byte[] content() {
         if (bytes == null) {
-            String text = WebAssets.get(name);
-            if (text != null) bytes = text.getBytes(StandardCharsets.UTF_8);
+            bytes = WebAssets.bytes(name);
         }
         return bytes;
     }

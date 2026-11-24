@@ -33,6 +33,8 @@ public final class Server {
                     new StaticAssetHandler("style.css", "text/css; charset=utf-8"));
             manager.register("/logger/app.js",
                     new StaticAssetHandler("app.js", "application/javascript; charset=utf-8"));
+            manager.register("/logger/logo.png",
+                    new StaticAssetHandler("logo.png", "image/png"));
 
             // API
             manager.register("/logger/api/opmodes",
